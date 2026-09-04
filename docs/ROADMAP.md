@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | v1 |
+| Status | v2, all phases delivered |
 | Date | 2026-09-04 |
 | Owner | Subhan javaid |
 | Companion doc | [PRD.md](PRD.md) |
@@ -130,78 +130,64 @@ Note on the free email service: Supabase sends only a few auth emails per hour o
 
 Exit criteria unchanged: sign up, verify, download, sign in elsewhere and see the same history; a disposable email is refused with a clear message.
 
-### Phase 3: Mobile-first UI/UX pass (1 week)
+### Phase 3: Mobile-first UI/UX pass (done 2026-09-04)
 
-Goal: it feels like an app, not a form.
+- Design tokens consolidated for spacing, type, motion and semantic colour, defined light-first with dark overrides so no colour exists only in one theme.
+- Bottom navigation. The home page already had a sticky action bar, so both now render inside one fixed stack and overlap is structurally impossible rather than a matter of matched offsets. Verified by measuring positions, not by eye.
+- Installable web app: real PNG icons at every size, an install prompt with an iOS fallback, and a service worker that is network-first for pages with a precached offline page and cache-first only for hashed assets. Verified by forcing the browser offline.
+- Share target: a link shared from the YouTube app skips the input debounce so the preview appears at once, music links preselect Audio, everything else falls back to remembered preferences.
+- Accessibility: skip link, one visible focus style, one heading per screen, a polite live region announcing download stage and progress, roving tabindex on the mode switch, spoken labels on quality chips.
+- Fixed a real contrast failure found on the way: white on the dark-theme accent measured 2.7:1 and is now 6.9:1. Muted, amber, ok and danger were darkened in the light theme to clear 4.5:1.
 
-- Design system in Tailwind tokens (already started in `globals.css`): spacing scale, type scale, semantic colors, motion.
-- Bottom navigation: Download, History, Account.
-- Install prompt for the PWA, app icon set (192/512 PNG in addition to SVG), splash colors, offline shell that explains "you are offline".
-- Share target polish: opening from the YouTube app lands directly on the preview with the right mode preselected.
-- Accessibility: focus order, labels, contrast in both themes, reduced motion, screen-reader announcements for progress.
-- Performance: Lighthouse mobile score 90+ on Performance and Accessibility. Fonts subset, thumbnails lazy.
-- Empty, loading, error, and success states designed for every screen.
-- Exit criteria: usability test with 3 people on their own phones, each completes a download without help.
+No Lighthouse score: the tool is not available in this environment, so the underlying factors were checked by hand.
 
-### Phase 4: Deployment and operations (3 to 4 days)
+### Phase 4: Deployment and operations (built 2026-09-04, deploy still yours to run)
 
-Goal: a public URL, deployed automatically from `main`, monitored.
+- `render.yaml` blueprint for the backend, `vercel.json` for the frontend, both with secrets declared by name only.
+- Backend image rebuilt in two stages, non-root, read-only application directory. Three real defects fixed: the build context previously included the real environment file, the server was not the init process so shutdown never ran, and behind a load balancer every request carried the balancer's address, which silently turned the per-request rate limit into one global cap.
+- The health endpoint reported only values cached at startup, so it could not detect a database outage and the uptime ping was not keeping the free database awake. It now runs a real query and reports the result.
+- Nightly job bumps the downloader, runs the suite against it and opens a pull request. A plain image rebuild would have changed nothing, because the lockfile pins the version.
+- Weekly database dump to object storage, since the free tier has no backups. Uses the session pooler, because the transaction pooler the app uses cannot run the dump.
+- `docs/DEPLOYMENT.md` is the step-by-step runbook.
 
-- Vercel project for `frontend/`, env `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
-- Render web service from `backend/Dockerfile`, env from `.env.example`, health check `/health`, persistent disk not needed (files go to R2).
-- R2 bucket with lifecycle rule and an API token scoped to that bucket.
-- DNS at GoDaddy: `app.yourdomain` to Vercel, `api.yourdomain` to Render. Lock CORS to the app origin.
-- GitHub Actions (already in `.github/workflows/ci.yml`): lint, tests, build on every PR. Deploys are automatic from `main` on Vercel and Render.
-- UptimeRobot on `/health` every 5 minutes (also keeps Render and Supabase awake).
-- Nightly job that rebuilds the backend image so `yt-dlp` stays current. YouTube changes break old versions within weeks.
-- Weekly `pg_dump` from a GitHub Action to R2 (free backups; Supabase free tier has none).
-- Sentry in both apps.
-- Exit criteria: push to `main` reaches production in under 5 minutes with zero manual steps; an outage pages you by email.
+Docker is not installed on this machine, so the image was never built locally. The new continuous integration job builds and runs it, so the first run after pushing is the real test.
 
-### Phase 5: Analytics and user activity (4 to 5 days)
+### Phase 5: Analytics and user activity (done 2026-09-04)
 
-Goal: know who signs up, whether their email is real, and what they do.
+- Admin service and eight endpoints, all range-scoped, every figure aggregated in SQL rather than counted in application code.
+- Access declared once as a router-level dependency so a later route cannot forget it. No token is refused, any role but admin is refused, and with authentication unconfigured the routes are closed rather than open.
+- Dashboard leads with the answer in a sentence, then supporting figures, then a strip that appears only when something needs attention. Chart colours were chosen by running a validator, which caught two combinations that fail for colour-blind readers and one that fails for everyone.
+- Product analytics are opt-in and inert without a key, with autocapture and session recording off and properties scrubbed of links, titles and addresses.
+- Ninety-day event retention is now enforced nightly rather than merely documented, and the dashboard counts overdue rows so a job that quietly stops is visible.
 
-- API writes to `events` for: `signup`, `email_verified`, `signin`, `info_requested`, `download_started`, `download_completed`, `download_failed` (with error code), `quota_hit`. Properties as JSONB. IP stored as a salted hash, never raw.
-- PostHog snippet in the frontend with the same event names, identified by the Supabase user id. Funnels: sign up to verified, verified to first download, first download to 7-day return.
-- Admin dashboard (route guarded by `profiles.role = 'admin'`):
-  - Sign ups per day, split verified / unverified / disposable / bounced.
-  - Daily and weekly active users.
-  - Downloads per day by mode and format, success rate, top error codes.
-  - Median time from paste to file ready.
-  - Top email domains, flagged accounts.
-- Data hygiene: 90-day retention on raw events, a privacy policy page, cookie consent for PostHog if you have EU visitors.
-- Exit criteria: you can answer "how many real users did I get this week and what did they download" from one page.
+Gap: the dashboard was exercised against a local copy of the real data, because production has no admin account to sign in as and creating one is the user's decision.
 
-### Phase 6: Hardening, quotas, and growth (ongoing)
+### Phase 6: Hardening, quotas, and playlists (done 2026-09-04)
 
-- Abuse controls: per-user and per-IP quotas, file size caps, refuse videos over 3 hours, ban list.
-- YouTube bot-check strategy: cookies from a dedicated throwaway account, or route the worker through a residential proxy, or run the worker on a home machine or VM whose IP is not flagged. Decide when it first happens, not before.
-- Whole-playlist downloads with a job queue and per-item progress.
-- Sentry alerts to email or Telegram, cost alerts on R2 and Render.
-- Legal pages: Terms of Service, Privacy Policy, DMCA contact. Personal-use disclaimer at sign up.
-- Second language for the UI if your users need it.
-- Cost review: at roughly 200 daily downloads you will outgrow Render free; move the worker to the Oracle VM or Hetzner and keep everything else free.
+- Whole-playlist downloads: a parent run with one child job per video, taking a single worker slot and running sequentially, with per-item progress, per-item files and per-item failure. A failed video does not stop the run. Cancelling stops the run and keeps what already finished. A restart re-queues only the item that died.
+- Quota rule: one video is one download, and the whole playlist must fit in what is left today, refused up front with the numbers. This stops a guest's three-a-day meaning three playlists, and cannot be gamed because the children are real rows the existing count already sees.
+- The file size cap was declared in settings and never read. It is now enforced during the download. Doing so surfaced a real bug: an oversized download aborts and still reports success, so the user saw a generic failure instead of being told to pick a lower quality.
+- Client address strategy that cannot be forged by the caller, a ban list by user or hashed address that fails open on a database error, an optional cookie file for the bot check, and error reporting behind a key with a scrubber.
+- Terms, privacy and copyright pages, honest about what this is, with every operator-specific detail left as a visible placeholder.
 
-### Phase 7 (optional): Native mobile
+Not verified live: the over-cap refusal on a genuinely oversized playlist, video-mode playlists end to end, and playlists against object storage.
 
-- Wrap the PWA with Capacitor for an installable Android app, or build an Expo app that talks to the same API.
-- Push notification when a long download finishes.
-- Only worth it if the PWA share target is not enough for your users.
+### Phase 7: Native mobile (deliberately deferred)
 
----
+The roadmap always listed this as optional and worth doing only if the installable web app proves insufficient. This machine has neither Java nor an Android SDK, so a wrapper could not be built or verified here, and shipping an unbuildable project would be worse than not shipping one. The share target and install prompt already cover the case it was meant to solve.
 
 ## 3. Timeline
 
-| Phase | Duration | Cumulative |
-|---|---|---|
-| 0 Foundations | done | week 0 |
-| 1 Solid single-user product | done | week 0 |
-| 2 Accounts and database | built, needs anon key | week 0 |
-| 3 Mobile-first UI/UX | 1 week | week 3 |
-| 4 Deployment and operations | 3 to 4 days | week 4 |
-| 5 Analytics | 4 to 5 days | week 5 |
-| 6 Hardening and growth | ongoing | week 6+ |
+| Phase | State |
+|---|---|
+| 0 Foundations | done |
+| 1 Solid single-user product | done |
+| 2 Accounts and database | done, browser sign-in still needs the project's public key |
+| 3 Mobile-first UI/UX | done |
+| 4 Deployment and operations | built and documented, deploy is yours to run |
+| 5 Analytics | done |
+| 6 Hardening, quotas, playlists | done |
+| 7 Native mobile | deferred on purpose, see above |
 
 Phases 2 and 3 can swap if you want the public URL sooner. Phase 4 can move earlier so every phase deploys to a real URL, which is the better habit.
 

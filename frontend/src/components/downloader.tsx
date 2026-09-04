@@ -58,6 +58,7 @@ import {
   SiteFooter,
   Skeleton,
 } from "@/components/ui";
+import { track } from "@/lib/analytics";
 import { useAuth } from "@/lib/auth";
 
 type AudioOption = {
@@ -209,6 +210,22 @@ function DownloadScreen({ shared }: { shared: SharedLink | null }) {
         const next = await api.getJob(jobId);
         setJob(next);
         if (TERMINAL.has(next.status)) {
+          // Report once, on the transition. The poller keeps returning the same
+          // terminal row afterwards, and a second event would double-count it.
+          track(
+            next.status === "done"
+              ? "download_completed"
+              : next.status === "cancelled"
+                ? "download_cancelled"
+                : "download_failed",
+            {
+              mode: next.mode,
+              format: next.format,
+              quality: next.quality,
+              size_bytes: next.size_bytes,
+              error_code: next.error?.code ?? null,
+            },
+          );
           refreshRecent();
           void auth.refreshMe();
         }
@@ -340,9 +357,11 @@ function DownloadScreen({ shared }: { shared: SharedLink | null }) {
     try {
       if (wantsPlaylist) setPlaylist(await api.createPlaylist(body));
       else setJob(await api.createJob(body));
+      track("download_started", { mode, playlist: wantsPlaylist });
     } catch (e) {
       // The server's refusals (over the cap, not enough quota left today) are
       // already plain English, so they are shown exactly as they arrive.
+      if (e instanceof ApiError && e.status === 429) track("quota_hit", { playlist: wantsPlaylist });
       setJobError(e instanceof ApiError ? e.message : "Could not start the download.");
     } finally {
       setSubmitting(false);

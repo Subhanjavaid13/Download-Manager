@@ -181,6 +181,15 @@ function Account() {
             >
               My downloads
             </Link>
+            {/* The dashboard is otherwise reachable only by typing the URL. */}
+            {me?.role === "admin" && (
+              <Link
+                href="/admin"
+                className="tap inline-flex items-center rounded-control border border-line px-4 text-sm font-semibold text-ink-2 transition-ui hover:bg-surface-2"
+              >
+                Dashboard
+              </Link>
+            )}
             <Button
               type="button"
               tone="secondary"
