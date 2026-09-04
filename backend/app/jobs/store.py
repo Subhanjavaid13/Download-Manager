@@ -17,6 +17,7 @@ import shutil
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -59,6 +60,7 @@ def job_to_dict(job: Download, storage: Storage, ttl_sec: int) -> dict:
     )
     return {
         "id": str(job.id),
+        "user_id": str(job.user_id) if job.user_id else None,
         "video_id": job.video_id,
         "url": job.canonical_url,
         "title": job.title,
@@ -112,8 +114,10 @@ class JobStore:
         concurrency: int = 2,
         ttl_minutes: int = 60,
         sweep_interval_sec: float = 60.0,
+        on_finish: Callable[[dict], None] | None = None,
     ) -> None:
         self._downloader = downloader
+        self._on_finish = on_finish
         self._storage = storage
         self._sessions = session_factory
         self._work_dir = work_dir
@@ -243,6 +247,13 @@ class JobStore:
             log.info("sweep removed %d expired files", removed)
         return removed
 
+    def delete_stored(self, key: str) -> None:
+        """Remove one stored file (used when an account is deleted)."""
+        try:
+            self._storage.delete(key)
+        except Exception:  # noqa: BLE001
+            log.warning("could not delete %s", key, exc_info=True)
+
     def shutdown(self) -> None:
         self._stop.set()
         self._pool.shutdown(wait=False, cancel_futures=True)
@@ -318,6 +329,15 @@ class JobStore:
         finally:
             with self._lock:
                 self._cancel_events.pop(job_id, None)
+            if self._on_finish is not None:
+                try:
+                    with session_scope(self._sessions) as s:
+                        row = self._load(s, job_id)
+                        snapshot = self._snapshot(row) if row is not None else None
+                    if snapshot is not None:
+                        self._on_finish(snapshot)
+                except Exception:  # noqa: BLE001
+                    log.exception("on_finish hook failed for %s", job_id)
 
     def _mark(self, job_id: str, status: str, **fields) -> None:
         with session_scope(self._sessions) as s:

@@ -103,17 +103,32 @@ Deferred: Server-Sent Events for progress (polling every second is fine at this 
 
 Exit criteria for you to run: 20 consecutive downloads (10 audio, 10 video) on a phone over mobile data.
 
-### Phase 2: Accounts and database (1 week)
+### Phase 2: Accounts and database (built 2026-09-04, one value still needed from you)
 
 Goal: sign up, sign in, verified email, personal history.
 
-- Supabase project (created 2026-09-04, pooler connection verified from the app). Apply the schema with `uv run python scripts/migrate.py`; the dry run already passes against the project.
-- Frontend: `@supabase/ssr` client, pages for sign up, sign in, verify-email notice, forgot password, account. Google OAuth as a one-click option.
-- API: set `DM_SUPABASE_URL`, turn on `DM_REQUIRE_AUTH`, key rate limits by user id instead of IP.
-- Sign-up hardening: Turnstile, disposable-domain check, MX check. Unverified users see a banner and cannot start downloads.
-- History screen: my downloads with status, format, size, re-download while the file still exists.
-- Per-user daily quota (start at 20 downloads/day) stored in `profiles`.
-- Exit criteria: a new user can sign up, verify, download, sign out, sign in on another device and see the same history. A disposable email is refused with a clear message.
+Shipped:
+- Schema applied to the Supabase project (profiles, downloads, events, Row Level Security, admin views) through `scripts/migrate.py`, which tracks applied files. The API refuses to start on a Postgres database without the schema.
+- The API runs against Supabase Postgres through the pooler (psycopg 3, prepared statements off). Downloads, activity events, and the admin view were verified with real rows.
+- Token verification with the project's public ES256 keys (JWKS), with HS256 fallback for older projects. Bad or expired tokens get 401.
+- Sign-up goes through the API so the checks are enforced server-side: syntax, disposable-domain blocklist (about 4,000 domains), MX lookup, optional Cloudflare Turnstile. The result is stored as `email_risk` on the profile and as a `signup` or `signup_rejected` event. Then the API forwards to Supabase Auth, which sends the verification email.
+- Rules: guests get `DM_ANON_DAILY_LIMIT` (3) downloads a day per browser; signed-in users must be email-verified and get `profiles.daily_quota` (20). `DM_REQUIRE_AUTH=true` turns guests off entirely. Rate limits key by token when signed in.
+- Sign-in attaches the browser's guest downloads to the account (`POST /api/v1/auth/claim`), so history is not lost by signing up late.
+- Events written by the API: signup, signup_rejected, signin, download_started, download_completed, download_failed, download_cancelled, quota_hit, account_deleted. IPs stored as salted hashes.
+- Account deletion removes history, files, the profile, and (on Supabase) the auth user.
+- Frontend: sign in, sign up (with the verification-sent screen and resend), forgot password, reset password, verification callback, account page (verified state, quota bar, sign out, delete), history page with thumbnails and auto-refresh, Download/History/Account tabs, banners for guests and unverified users, Google sign-in button. Without Supabase keys the UI runs in guest mode and shows a clear "not set up" page.
+- Also fixed on the way: M4A and Opus cover art embedding needed `mutagen`.
+- 73 backend tests. Frontend lint, types, build, and a browser run of the guest flow on the Postgres-backed API pass.
+
+Not verified yet, because it needs the project's anon key: the browser side of sign-up, the verification email, and sign-in. Steps to finish:
+1. Supabase Dashboard > Project Settings > API: copy the anon/publishable key into `frontend/.env.local` as `NEXT_PUBLIC_SUPABASE_ANON_KEY` and into `backend/.env` as `DM_SUPABASE_ANON_KEY`.
+2. Dashboard > Authentication > URL Configuration: Site URL `http://localhost:3000`; add `http://localhost:3000/auth/callback` and `http://localhost:3000/auth/reset` to Redirect URLs (later the Vercel domain too).
+3. Optional: Authentication > Providers > Google (needs a Google Cloud OAuth client). Optional: Cloudflare Turnstile keys.
+4. Restart both servers, sign up with a real address, tap the link, download once, then sign in on a second browser and see the same history.
+
+Note on the free email service: Supabase sends only a few auth emails per hour on the free tier. For real users, add a custom SMTP provider (Resend and Brevo have free tiers) in Authentication > SMTP Settings.
+
+Exit criteria unchanged: sign up, verify, download, sign in elsewhere and see the same history; a disposable email is refused with a clear message.
 
 ### Phase 3: Mobile-first UI/UX pass (1 week)
 
@@ -182,7 +197,7 @@ Goal: know who signs up, whether their email is real, and what they do.
 |---|---|---|
 | 0 Foundations | done | week 0 |
 | 1 Solid single-user product | done | week 0 |
-| 2 Accounts and database | 1 week | week 2 |
+| 2 Accounts and database | built, needs anon key | week 0 |
 | 3 Mobile-first UI/UX | 1 week | week 3 |
 | 4 Deployment and operations | 3 to 4 days | week 4 |
 | 5 Analytics | 4 to 5 days | week 5 |

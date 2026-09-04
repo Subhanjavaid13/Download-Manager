@@ -12,6 +12,8 @@ class HealthResponse(BaseModel):
     ffmpeg_version: str | None
     ytdlp_version: str
     auth_enabled: bool
+    require_auth: bool
+    signup_enabled: bool
     storage: Literal["local", "r2"]
     database: Literal["sqlite", "postgresql", "other"]
 

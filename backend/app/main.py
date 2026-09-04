@@ -14,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
+from app.api import auth as auth_api
 from app.api import info, jobs
 from app.auth import auth_enabled
 from app.config import get_settings
@@ -23,6 +24,7 @@ from app.db import init_db, make_engine, make_session_factory
 from app.deps import limiter
 from app.jobs.store import JobStore
 from app.schemas import HealthResponse
+from app.services.accounts import Accounts
 from app.storage import build_storage
 
 log = logging.getLogger("app")
@@ -47,13 +49,29 @@ async def lifespan(app: FastAPI):
     storage = build_storage(settings)
     app.state.storage = storage
 
+    session_factory = make_session_factory(engine)
+    accounts = Accounts(session_factory, ip_salt=settings.ip_hash_salt)
+    app.state.accounts = accounts
+
+    def on_finish(job: dict) -> None:
+        name = {"done": "download_completed", "error": "download_failed"}.get(
+            job["status"], "download_cancelled"
+        )
+        props = {"mode": job["mode"], "format": job["format"], "quality": job["quality"]}
+        if job["status"] == "done":
+            props["size_bytes"] = job["size_bytes"]
+        elif job["error"]:
+            props["error_code"] = job["error"]["code"]
+        accounts.record(name, user_id=job.get("user_id"), properties=props)
+
     app.state.jobs = JobStore(
         downloader=app.state.downloader,
         storage=storage,
-        session_factory=make_session_factory(engine),
+        session_factory=session_factory,
         work_dir=settings.download_dir / "_work",
         concurrency=settings.worker_concurrency,
         ttl_minutes=settings.job_ttl_minutes,
+        on_finish=on_finish,
     )
     requeued = app.state.jobs.recover()
     app.state.jobs.sweep()
@@ -74,7 +92,7 @@ def create_app() -> FastAPI:
     settings = get_settings()
     app = FastAPI(
         title=settings.app_name,
-        version="0.2.0",
+        version="0.3.0",
         lifespan=lifespan,
         docs_url="/docs" if settings.environment != "production" else None,
     )
@@ -90,9 +108,11 @@ def create_app() -> FastAPI:
     )
     app.include_router(info.router)
     app.include_router(jobs.router)
+    app.include_router(auth_api.router)
 
     @app.get("/health", response_model=HealthResponse, tags=["meta"])
     async def health() -> HealthResponse:
+        settings = get_settings()  # read fresh so config changes show up without a restart
         ff = app.state.ffmpeg
         dialect = app.state.engine.dialect.name
         return HealthResponse(
@@ -102,6 +122,8 @@ def create_app() -> FastAPI:
             ffmpeg_version=ff.version,
             ytdlp_version=yt_dlp.version.__version__,
             auth_enabled=auth_enabled(settings),
+            require_auth=settings.require_auth,
+            signup_enabled=bool(settings.supabase_url and settings.supabase_anon_key),
             storage=app.state.storage.kind,
             database=dialect if dialect in ("sqlite", "postgresql") else "other",
         )

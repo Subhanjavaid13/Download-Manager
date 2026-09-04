@@ -1,5 +1,6 @@
 """Shared singletons and FastAPI dependencies."""
 
+import hashlib
 import re
 
 from fastapi import Depends, Header, Request
@@ -9,9 +10,18 @@ from slowapi.util import get_remote_address
 from app.auth import User, get_current_user
 from app.core.downloader import Downloader
 from app.jobs.store import JobStore, Owner
+from app.services.accounts import Accounts
 
-# Per-IP rate limiting. Phase 2 switches the key to the user id when signed in.
-limiter = Limiter(key_func=get_remote_address)
+
+def rate_limit_key(request: Request) -> str:
+    """Signed-in callers are limited per token, anonymous callers per IP."""
+    auth = request.headers.get("authorization")
+    if auth and auth.lower().startswith("bearer "):
+        return "tok:" + hashlib.sha256(auth[7:].encode()).hexdigest()[:24]
+    return "ip:" + get_remote_address(request)
+
+
+limiter = Limiter(key_func=rate_limit_key)
 
 _CLIENT_ID = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
 
@@ -36,3 +46,7 @@ def get_owner(
     client_id: str | None = Depends(get_client_id),
 ) -> Owner:
     return Owner(user_id=user.id if user else None, client_id=client_id)
+
+
+def get_accounts(request: Request) -> Accounts:
+    return request.app.state.accounts

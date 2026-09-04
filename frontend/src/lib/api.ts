@@ -24,6 +24,8 @@ export type Health = {
   ffmpeg_version: string | null;
   ytdlp_version: string;
   auth_enabled: boolean;
+  require_auth: boolean;
+  signup_enabled: boolean;
   storage: "local" | "r2";
   database: "sqlite" | "postgresql" | "other";
 };
@@ -150,8 +152,55 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return (await res.json()) as T;
 }
 
+export type AuthConfig = {
+  enabled: boolean;
+  signup_enabled: boolean;
+  require_auth: boolean;
+  anon_daily_limit: number;
+  turnstile_required: boolean;
+};
+
+export type Profile = {
+  id: string;
+  email: string | null;
+  display_name: string | null;
+  role: "user" | "admin";
+  daily_quota: number;
+  downloads_today: number;
+  email_verified: boolean;
+  email_risk: string;
+  created_at: string | null;
+};
+
+export type SignupRequest = {
+  email: string;
+  password: string;
+  display_name?: string;
+  turnstile_token?: string;
+  redirect_to?: string;
+};
+
+export type SignupResponse = {
+  user_id: string | null;
+  email: string;
+  confirmation_required: boolean;
+  session: {
+    access_token: string;
+    refresh_token: string;
+    expires_in?: number;
+    expires_at?: number;
+  } | null;
+  message: string;
+};
+
 export const api = {
   health: () => request<Health>("/health"),
+  authConfig: () => request<AuthConfig>("/api/v1/auth/config"),
+  signup: (body: SignupRequest) =>
+    request<SignupResponse>("/api/v1/auth/signup", { method: "POST", body: JSON.stringify(body) }),
+  me: () => request<Profile>("/api/v1/auth/me"),
+  claimHistory: () => request<{ claimed: number }>("/api/v1/auth/claim", { method: "POST" }),
+  deleteAccount: () => request<void>("/api/v1/auth/me", { method: "DELETE" }),
   info: (url: string, signal?: AbortSignal) =>
     request<Info>(`/api/v1/info?url=${encodeURIComponent(url)}`, { signal }),
   createJob: (body: JobCreate) =>

@@ -50,10 +50,20 @@ class Settings(BaseSettings):
     r2_bucket: str | None = None
     r2_endpoint_url: str | None = None  # defaults to https://<account_id>.r2.cloudflarestorage.com
 
-    # Auth (Phase 2). Leave empty to run the API without authentication in development.
-    require_auth: bool = False
+    # Auth (Phase 2). Leave supabase_url empty to run the API without authentication.
+    require_auth: bool = False  # true: every download needs a signed-in, verified user
     supabase_url: str | None = None
+    supabase_anon_key: str | None = None  # public "anon"/publishable key; needed for sign-up
     supabase_jwt_secret: str | None = None  # legacy HS256 secret; JWKS is used when empty
+
+    # Quotas. Signed-in users get profiles.daily_quota (20 by default, editable per user).
+    anon_daily_limit: int = 3  # downloads per day per anonymous browser while auth is on
+
+    # Sign-up hardening.
+    check_disposable_email: bool = True
+    check_mx: bool = True
+    turnstile_secret: str | None = None  # Cloudflare Turnstile; verified only when set
+    ip_hash_salt: str = "change-me-in-production"  # IPs are stored as salted hashes only
 
 
 @lru_cache

@@ -31,7 +31,7 @@ Nothing else is required. Auth and the database are off until you fill in `backe
 
 ```powershell
 cd backend
-uv run pytest -q                 # 48 tests
+uv run pytest -q                 # 73 tests
 curl http://localhost:8000/health
 ```
 
@@ -56,6 +56,22 @@ Files are deleted one hour after a job finishes. The history row stays.
 ## Configuration
 
 All backend settings are `DM_*` environment variables, documented in [backend/.env.example](backend/.env.example). Two matter most: `DM_DATABASE_URL` (SQLite by default, a Supabase Postgres URI in production) and `DM_STORAGE` (`local` by default, `r2` for Cloudflare R2 in production). The frontend needs only `NEXT_PUBLIC_API_URL` (see [frontend/.env.local.example](frontend/.env.local.example)).
+
+## Accounts
+
+Auth is Supabase. Sign in, password reset, and sessions happen in the browser with the Supabase client; sign-up goes through the API so email checks run server-side. To turn it on:
+
+1. Put the project URL and anon key in `frontend/.env.local` (`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`) and in `backend/.env` (`DM_SUPABASE_URL`, `DM_SUPABASE_ANON_KEY`).
+2. In the Supabase dashboard set the Site URL and add `/auth/callback` and `/auth/reset` to the redirect allow-list.
+3. Restart. Guests keep `DM_ANON_DAILY_LIMIT` downloads a day; verified users get 20. Set `DM_REQUIRE_AUTH=true` to require sign-in for everything.
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/v1/auth/config` | Is auth on, is sign-up on, guest allowance |
+| POST | `/api/v1/auth/signup` | Checks the email (syntax, disposable, MX, CAPTCHA) then creates the Supabase user |
+| GET | `/api/v1/auth/me` | Profile, quota, downloads today, verified flag |
+| POST | `/api/v1/auth/claim` | Attach this browser's guest downloads to the signed-in account |
+| DELETE | `/api/v1/auth/me` | Delete account, history, and files |
 
 ## Database
 

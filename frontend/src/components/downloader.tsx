@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
@@ -22,6 +23,8 @@ import {
   formatSpeed,
   looksLikeYouTube,
 } from "@/lib/format";
+import { AppHeader, SubNav } from "@/components/header";
+import { useAuth } from "@/lib/auth";
 
 type Mode = "audio" | "video";
 
@@ -57,6 +60,7 @@ const STAGE_LABEL: Record<string, string> = {
 export default function Downloader() {
   const params = useSearchParams();
   const shared = params.get("url") ?? params.get("text") ?? "";
+  const auth = useAuth();
 
   const [url, setUrl] = useState(() => extractUrl(shared));
   const [mode, setMode] = useState<Mode>("audio");
@@ -130,13 +134,16 @@ export default function Downloader() {
       try {
         const next = await api.getJob(jobId);
         setJob(next);
-        if (TERMINAL.has(next.status)) refreshRecent();
+        if (TERMINAL.has(next.status)) {
+          refreshRecent();
+          void auth.refreshMe();
+        }
       } catch {
         // keep the last known state; the next tick retries
       }
     }, 1000);
     return () => clearInterval(timer);
-  }, [jobId, jobActive, refreshRecent]);
+  }, [jobId, jobActive, refreshRecent, auth]);
 
   // Video presets that make sense for this video (never above what YouTube has).
   const maxAvailable = info?.available_heights.length
@@ -211,10 +218,9 @@ export default function Downloader() {
   return (
     <>
       <main className="mx-auto w-full max-w-md flex-1 px-4 pb-32 pt-6 sm:max-w-lg sm:pt-10">
-        <header className="mb-6 flex items-center justify-between">
-          <h1 className="font-display text-2xl font-bold tracking-tight">Downloader Manager</h1>
-          <HealthDot health={health} />
-        </header>
+        <AppHeader right={<HealthDot health={health} />} />
+        <SubNav />
+        <AuthBanners />
 
         {/* URL input */}
         <section className="rounded-xl border border-line bg-surface p-3 shadow-sm">
@@ -312,6 +318,11 @@ export default function Downloader() {
               />
             </div>
           )}
+          {auth.me && (
+            <p className="mt-2 text-xs text-muted tabular-nums">
+              {auth.me.downloads_today} of {auth.me.daily_quota} downloads used today.
+            </p>
+          )}
           {mode === "audio" && audioChoice === "mp3-320" && (
             <p className="mt-2 text-xs text-muted">
               YouTube&apos;s source audio is about 128 to 160 kbps. 320 kbps makes a bigger file, not a better one.
@@ -377,6 +388,42 @@ export default function Downloader() {
 }
 
 /* ---------- pieces ---------- */
+
+function AuthBanners() {
+  const { available, ready, user, me, config } = useAuth();
+  const params = useSearchParams();
+  if (!available || !ready) return null;
+  if (params.get("verified") && user && me?.email_verified) {
+    return (
+      <p className="mb-4 rounded-lg bg-ok-soft px-3 py-2 text-sm text-ok">
+        Email verified. You are signed in.
+      </p>
+    );
+  }
+  if (user && me && !me.email_verified) {
+    return (
+      <p className="mb-4 rounded-lg bg-amber-soft px-3 py-2 text-sm text-amber">
+        Verify your email to start downloading. Check your inbox, or{" "}
+        <Link href="/account" className="font-medium underline">
+          resend the link
+        </Link>
+        .
+      </p>
+    );
+  }
+  if (!user && config?.enabled) {
+    return (
+      <p className="mb-4 rounded-lg bg-accent-soft px-3 py-2 text-sm text-accent">
+        Guests get {config.anon_daily_limit} downloads a day.{" "}
+        <Link href="/signup" className="font-medium underline">
+          Create a free account
+        </Link>{" "}
+        for 20 a day and history on every device.
+      </p>
+    );
+  }
+  return null;
+}
 
 function HealthDot({ health }: { health: Health | null | "offline" }) {
   const state =

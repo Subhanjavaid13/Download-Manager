@@ -3,7 +3,20 @@
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Float, Index, Integer, String, Text, Uuid
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    Boolean,
+    DateTime,
+    Float,
+    Identity,
+    Index,
+    Integer,
+    String,
+    Text,
+    Uuid,
+)
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -93,3 +106,41 @@ class Download(Base):
 def _aware(dt: datetime) -> datetime:
     """SQLite drops tzinfo on the way back; treat naive values as UTC."""
     return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
+
+
+class Profile(Base):
+    """One row per signed-in user. In Postgres the trigger in the migration creates it;
+    the API also upserts it so SQLite development works without Supabase triggers."""
+
+    __tablename__ = "profiles"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    email: Mapped[str] = mapped_column(Text)
+    display_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    role: Mapped[str] = mapped_column(String(16), default="user")
+    daily_quota: Mapped[int] = mapped_column(Integer, default=20)
+    email_risk: Mapped[str] = mapped_column(String(16), default="unknown")
+    signup_ip_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
+    signup_ua: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+
+class Event(Base):
+    """Activity log. Written by the API only; read by the admin dashboard (Phase 5)."""
+
+    __tablename__ = "events"
+
+    id: Mapped[int] = mapped_column(
+        Integer().with_variant(BigInteger(), "postgresql"), Identity(), primary_key=True
+    )
+    user_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True, index=True)
+    name: Mapped[str] = mapped_column(String(48), index=True)
+    properties: Mapped[dict] = mapped_column(JSONB().with_variant(JSON(), "sqlite"), default=dict)
+    ip_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
+    user_agent: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True
+    )
