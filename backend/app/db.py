@@ -41,6 +41,12 @@ def make_engine(database_url: str) -> Engine:
         create_engine(
             database_url,
             pool_pre_ping=not is_sqlite,
+            # Supabase's pooler closes connections it considers idle, and a
+            # download can sit between two progress writes for minutes. Pre-ping
+            # catches a dead connection when it is handed out; recycling retires
+            # it before the server does, which is what stops a long job dying
+            # partway through on a connection that went stale in the pool.
+            pool_recycle=240,
             pool_size=5,
             max_overflow=5,
             connect_args=connect_args,

@@ -84,11 +84,43 @@ _RULES: list[tuple[tuple[str, ...], FriendlyError]] = [
 _DEFAULT = FriendlyError("download_failed", "The download failed. Please try again.", 500)
 
 
+_SERVER = FriendlyError(
+    "server_error",
+    "Something went wrong on our side, not with your link. Please try again.",
+    500,
+)
+
+
 def to_friendly(exc: BaseException) -> FriendlyError:
+    """Map a failure to one short sentence a person can act on.
+
+    Our own storage failing is checked by type, before any message matching. A
+    dropped database connection reads as "server closed the connection
+    unexpectedly", which the network rule would otherwise match, and the user
+    would be told to check their internet over a fault that is entirely ours.
+    """
     if isinstance(exc, FileTooLargeError):
         return FriendlyError("file_too_large", str(exc), 413)
+    if _is_infrastructure_error(exc):
+        return _SERVER
     text = str(exc).lower()
     for needles, friendly in _RULES:
         if any(n in text for n in needles):
             return friendly
     return _DEFAULT
+
+
+def _is_infrastructure_error(exc: BaseException) -> bool:
+    """True when the fault is in something we run: the database, or object storage."""
+    from sqlalchemy.exc import SQLAlchemyError
+
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, SQLAlchemyError):
+            return True
+        if type(current).__module__.split(".")[0] in ("botocore", "boto3", "psycopg"):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
