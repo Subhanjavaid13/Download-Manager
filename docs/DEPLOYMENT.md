@@ -27,6 +27,7 @@ The repo already contains everything that can be prepared in advance:
 | [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) | Lint, tests, build, and a real start of the image |
 | [`.github/workflows/nightly-ytdlp.yml`](../.github/workflows/nightly-ytdlp.yml) | Keeps yt-dlp current |
 | [`.github/workflows/backup-database.yml`](../.github/workflows/backup-database.yml) | Weekly `pg_dump` to R2 |
+| [`.github/workflows/prune-events.yml`](../.github/workflows/prune-events.yml) | Nightly 90-day prune of the activity log |
 
 Replace `yourdomain.com` with your GoDaddy domain everywhere below.
 
@@ -277,7 +278,7 @@ must match exactly; the workflows reference them by name only.
 
 | Secret | Value | Used by |
 |---|---|---|
-| `SUPABASE_DB_URL` | **session pooler** URI, port **5432** (step 1.2) | `backup-database.yml` |
+| `SUPABASE_DB_URL` | **session pooler** URI, port **5432** (step 1.2) | `backup-database.yml`, `prune-events.yml` |
 | `R2_ACCOUNT_ID` | Cloudflare account id | `backup-database.yml` |
 | `R2_ACCESS_KEY_ID` | R2 token id | `backup-database.yml` |
 | `R2_SECRET_ACCESS_KEY` | R2 token secret | `backup-database.yml` |

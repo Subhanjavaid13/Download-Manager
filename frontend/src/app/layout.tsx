@@ -3,6 +3,7 @@ import { Bricolage_Grotesque, IBM_Plex_Mono, IBM_Plex_Sans } from "next/font/goo
 import "./globals.css";
 
 import { ConnectionBanner, ServiceWorker } from "@/components/pwa";
+import { AnalyticsProvider } from "@/lib/analytics";
 import { AuthProvider } from "@/lib/auth";
 
 const bricolage = Bricolage_Grotesque({
@@ -71,7 +72,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         </a>
         <ServiceWorker />
         <ConnectionBanner />
-        <AuthProvider>{children}</AuthProvider>
+        <AuthProvider>
+          <AnalyticsProvider>{children}</AnalyticsProvider>
+        </AuthProvider>
       </body>
     </html>
   );

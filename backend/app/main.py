@@ -17,8 +17,8 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from sqlalchemy import text
 
+from app.api import admin, info, jobs, playlists
 from app.api import auth as auth_api
-from app.api import info, jobs, playlists
 from app.auth import auth_enabled
 from app.config import Settings, get_settings
 from app.core.downloader import Downloader
@@ -29,6 +29,7 @@ from app.jobs.store import JobStore
 from app.observability import init_sentry
 from app.schemas import HealthResponse
 from app.services.accounts import Accounts
+from app.services.analytics import Analytics
 from app.services.bans import Bans
 from app.storage import build_storage
 
@@ -90,6 +91,9 @@ async def lifespan(app: FastAPI):
     accounts = Accounts(session_factory, ip_salt=settings.ip_hash_salt)
     app.state.accounts = accounts
     app.state.bans = Bans(session_factory, ip_salt=settings.ip_hash_salt)
+    # Read-only aggregates for /api/v1/admin. Also the source of the role check
+    # that guards those routes, so it is built whether or not auth is configured.
+    app.state.analytics = Analytics(session_factory)
 
     def on_finish(job: dict) -> None:
         name = {"done": "download_completed", "error": "download_failed"}.get(
@@ -166,6 +170,7 @@ def create_app() -> FastAPI:
     app.include_router(jobs.router)
     app.include_router(playlists.router)
     app.include_router(auth_api.router)
+    app.include_router(admin.router)
 
     @app.get("/health", response_model=HealthResponse, tags=["meta"])
     async def health() -> HealthResponse:

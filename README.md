@@ -31,7 +31,7 @@ Nothing else is required. Auth and the database are off until you fill in `backe
 
 ```powershell
 cd backend
-uv run pytest -q                 # 73 tests
+uv run pytest -q                 # 170 tests
 curl http://localhost:8000/health
 ```
 
@@ -112,9 +112,68 @@ Two scheduled workflows keep it running unattended:
 - **[backup-database.yml](.github/workflows/backup-database.yml)** runs `pg_dump`
   every Sunday and stores the gzipped dump in R2. The Supabase free tier has no
   backups of its own.
+- **[prune-events.yml](.github/workflows/prune-events.yml)** calls
+  `prune_old_events(90)` every night so the raw activity log never outlives the
+  90 days the privacy policy promises. It runs before the weekly backup, so a
+  restore cannot bring deleted events back. See [Analytics](#analytics).
 
 To try the production image locally: `docker compose up --build`, then
 http://localhost:8000/health.
+
+## Analytics
+
+The source of truth is the `events` table in this project's own database, written
+by the API. PostHog is optional and additive; the admin dashboard never reads from
+it.
+
+**Admin dashboard** at `/admin`. It answers one question on one page - how many
+people used the app this week and what they downloaded - and then the detail:
+sign-ups split verified / not verified / refused, daily and weekly actives,
+downloads per day by mode and format, success rate and top error codes, median
+time from job creation to file ready, the sign-up funnel, top email domains,
+flagged accounts, and whether the retention job is keeping up.
+
+To get in, make yourself an admin once:
+
+```sql
+update public.profiles set role = 'admin' where email = 'you@example.com';
+```
+
+Every `/api/v1/admin/*` route requires a valid Supabase token whose profile row
+says `role = 'admin'`: no token is 401, any other role is 403. There is no second
+way in, the role is read from the database on every request (so revoking someone
+takes one UPDATE), and the page itself only hides the door - the lock is the API.
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/v1/admin/overview` | Everything the dashboard draws, one round trip |
+| GET | `/api/v1/admin/signups` | Accounts per day, verified / not verified / refused |
+| GET | `/api/v1/admin/active-users` | Daily, weekly and monthly actives, accounts and guests |
+| GET | `/api/v1/admin/downloads` | Per day, by mode and format, success rate, top errors |
+| GET | `/api/v1/admin/timing` | Median, 90th, fastest and slowest time to a ready file |
+| GET | `/api/v1/admin/accounts` | Top email domains, flagged accounts |
+| GET | `/api/v1/admin/funnels` | Sign-up to verified to first download to a 7-day return |
+| GET | `/api/v1/admin/retention` | Events stored, oldest row, rows past the 90-day cutoff |
+
+All of them take `?days=N` (7 by default, 365 at most) or `?from=YYYY-MM-DD&to=YYYY-MM-DD`.
+Every figure is aggregated in SQL and works on SQLite as well as Postgres, so the
+endpoints are covered by the test suite rather than only by production.
+
+**PostHog** is off unless `NEXT_PUBLIC_POSTHOG_KEY` is set: without it the library
+is never even downloaded. With it, people are identified by their Supabase user
+id and nothing else, autocapture and session recording are off, and event names
+match the ones the API writes so the two sources can be compared. `lib/analytics.ts`
+strips URLs, titles and email addresses from event properties before they leave the
+browser, so what somebody downloaded never reaches a third party.
+
+**Retention.** Raw `events` rows are deleted after 90 days by
+`public.prune_old_events(90)`, which
+[prune-events.yml](.github/workflows/prune-events.yml) calls nightly. The
+dashboard's Data hygiene card counts rows already past the cutoff, so a job that
+quietly stopped shows up on the page and not only in a workflow log. Privacy
+notes that predate this still hold: IP addresses are stored as salted hashes,
+only the video id is kept and never the full URL, and deleting an account deletes
+its events.
 
 ## Legal
 

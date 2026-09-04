@@ -1,0 +1,154 @@
+name: Prune old events
+
+# Data hygiene for the activity log (Phase 5).
+#
+# `public.events` is the source of truth behind the admin dashboard, and every
+# row in it is a record of something a person did - with a salted IP hash and a
+# user agent attached. The privacy policy promises those raw rows are kept for
+# 90 days and no longer, and supabase/migrations/0001_init.sql ships the function
+# that enforces it:
+#
+#     select public.prune_old_events(90);   -- returns the number of rows deleted
+#
+# A function nobody calls is not a retention policy, so this workflow calls it
+# every night. pg_cron would be the natural home for it, but that is a Supabase
+# Pro feature; a scheduled Action is free and is already how this repo does its
+# weekly backup, so it is the same shape as backup-database.yml.
+#
+# The dashboard shows the other half of this: the "Past retention" figure on the
+# Data hygiene card counts rows older than 90 days, so a job that quietly stopped
+# running is visible on the page rather than only in this log.
+#
+# Repository secret it needs (Settings > Secrets and variables > Actions):
+#
+#   SUPABASE_DB_URL   Supabase > Connect > "Session pooler" URI, port 5432.
+#                     The same secret backup-database.yml uses. The transaction
+#                     pooler on 6543 would also work for a single statement, but
+#                     one secret for both jobs is one thing to rotate.
+#
+# Ordering note: this runs at 03:11, the weekly backup at 04:31 on Sundays. The
+# backup therefore captures the database *after* pruning, which is the intent -
+# a backup that restored 200 days of events would undo the retention promise.
+
+on:
+  schedule:
+    - cron: "11 3 * * *" # every night, 03:11 UTC
+  workflow_dispatch:
+    inputs:
+      keep_days:
+        description: "Keep events newer than this many days"
+        required: false
+        default: "90"
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: prune-events
+  cancel-in-progress: false
+
+jobs:
+  prune:
+    name: Delete events older than 90 days
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+      KEEP_DAYS: ${{ inputs.keep_days || '90' }}
+      PGSSLMODE: require
+      PGCONNECT_TIMEOUT: "30"
+
+    steps:
+      - name: Check the secret is set
+        run: |
+          if [ -z "$SUPABASE_DB_URL" ]; then
+            echo "::error::SUPABASE_DB_URL is not set. Add it under Settings > Secrets > Actions."
+            exit 1
+          fi
+          case "$KEEP_DAYS" in
+            ''|*[!0-9]*) echo "::error::keep_days must be a whole number"; exit 1 ;;
+          esac
+          if [ "$KEEP_DAYS" -lt 1 ]; then
+            echo "::error::keep_days must be at least 1 - refusing to delete every event"
+            exit 1
+          fi
+
+      - name: Prune
+        id: prune
+        run: |
+          # psql ships on the runner. Only a function call is needed here, so
+          # the client version does not matter (unlike pg_dump in the backup job).
+          before=$(psql "$SUPABASE_DB_URL" -Atc "select count(*) from public.events")
+          removed=$(psql "$SUPABASE_DB_URL" -Atc "select public.prune_old_events(${KEEP_DAYS})")
+          after=$(psql "$SUPABASE_DB_URL" -Atc "select count(*) from public.events")
+          oldest=$(psql "$SUPABASE_DB_URL" -Atc \
+            "select coalesce(min(created_at)::text, '(none)') from public.events")
+
+          # The function returning nothing means it is not installed - the
+          # migration has not been applied - which is a silent no-op otherwise.
+          if [ -z "$removed" ]; then
+            echo "::error::prune_old_events() returned nothing. Is supabase/migrations applied?"
+            exit 1
+          fi
+
+          # Nothing should ever be left behind the cutoff after a successful run.
+          overdue=$(psql "$SUPABASE_DB_URL" -Atc \
+            "select count(*) from public.events where created_at < now() - make_interval(days => ${KEEP_DAYS})")
+          if [ "$overdue" != "0" ]; then
+            echo "::error::${overdue} rows are still older than ${KEEP_DAYS} days after pruning"
+            exit 1
+          fi
+
+          {
+            echo "removed=${removed}"
+            echo "before=${before}"
+            echo "after=${after}"
+            echo "oldest=${oldest}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Summary
+        env:
+          REMOVED: ${{ steps.prune.outputs.removed }}
+          BEFORE: ${{ steps.prune.outputs.before }}
+          AFTER: ${{ steps.prune.outputs.after }}
+          OLDEST: ${{ steps.prune.outputs.oldest }}
+        run: |
+          {
+            echo "### Event retention"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Keep | ${KEEP_DAYS} days |"
+            echo "| Deleted | ${REMOVED} rows |"
+            echo "| Events before / after | ${BEFORE} / ${AFTER} |"
+            echo "| Oldest remaining | ${OLDEST} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Open an issue if pruning failed
+        if: failure()
+        run: |
+          title="Event retention job failed"
+          if gh issue list --state open --limit 100 --json title --jq '.[].title' \
+              | grep -qxF "$title"; then
+            echo "Issue already open."
+            exit 0
+          fi
+          run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          gh issue create --title "$title" --body "$(printf '%s\n' \
+            "The nightly \`prune_old_events()\` call did not complete." \
+            "" \
+            "Run: ${run_url}" \
+            "" \
+            "While this is broken the activity log keeps raw rows past the 90 days" \
+            "the privacy policy promises, so it is a commitment being missed, not" \
+            "just a cron job." \
+            "" \
+            "Usual causes, in order:" \
+            "1. The Supabase project paused after 7 days idle - open the dashboard" \
+            "   once to wake it, and check the UptimeRobot monitor." \
+            "2. \`SUPABASE_DB_URL\` rotated or expired." \
+            "3. \`supabase/migrations/0001_init.sql\` was never applied to this" \
+            "   project, so \`public.prune_old_events\` does not exist." \
+            "" \
+            "The admin dashboard's Data hygiene card shows how far behind it is.")"
