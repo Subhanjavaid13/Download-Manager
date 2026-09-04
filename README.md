@@ -31,7 +31,7 @@ Nothing else is required. Auth and the database are off until you fill in `backe
 
 ```powershell
 cd backend
-uv run pytest -q                 # 36 tests
+uv run pytest -q                 # 48 tests
 curl http://localhost:8000/health
 ```
 
@@ -41,16 +41,21 @@ curl http://localhost:8000/health
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/health` | FFmpeg, yt-dlp version, auth on/off |
+| GET | `/health` | FFmpeg, yt-dlp version, auth on/off, storage and database in use |
 | GET | `/api/v1/info?url=` | Title, channel, duration, thumbnail, available resolutions |
 | POST | `/api/v1/jobs` | Start a download `{url, mode, audio_format, audio_bitrate, video_height}` |
-| GET | `/api/v1/jobs/{id}` | Progress and status |
-| GET | `/api/v1/jobs/{id}/file` | The finished file |
+| GET | `/api/v1/jobs` | This browser's or user's recent downloads |
+| GET | `/api/v1/jobs/{id}` | Progress, status, and whether the file is still available |
+| GET | `/api/v1/jobs/{id}/file` | The file (streamed locally, or a redirect to a signed R2 link) |
 | DELETE | `/api/v1/jobs/{id}` | Cancel |
+
+Send `X-Client-Id: <8-64 url-safe chars>` on every call so anonymous history works; the frontend does this automatically. Signed-in users send `Authorization: Bearer <supabase token>` instead (Phase 2).
+
+Files are deleted one hour after a job finishes. The history row stays.
 
 ## Configuration
 
-All backend settings are `DM_*` environment variables, documented in [backend/.env.example](backend/.env.example). The frontend needs only `NEXT_PUBLIC_API_URL` (see [frontend/.env.local.example](frontend/.env.local.example)).
+All backend settings are `DM_*` environment variables, documented in [backend/.env.example](backend/.env.example). Two matter most: `DM_DATABASE_URL` (SQLite by default, a Supabase Postgres URI in production) and `DM_STORAGE` (`local` by default, `r2` for Cloudflare R2 in production). The frontend needs only `NEXT_PUBLIC_API_URL` (see [frontend/.env.local.example](frontend/.env.local.example)).
 
 ## Deploy
 

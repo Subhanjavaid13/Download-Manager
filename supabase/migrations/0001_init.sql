@@ -72,28 +72,44 @@ create trigger profiles_touch before update on public.profiles
 -- downloads
 -- ---------------------------------------------------------------------------
 create table if not exists public.downloads (
-  id             uuid primary key default gen_random_uuid(),
-  user_id        uuid references public.profiles (id) on delete cascade,
-  video_id       text not null,
-  title          text,
-  channel        text,
-  duration_sec   integer,
-  mode           text not null check (mode in ('audio', 'video')),
-  format         text not null,            -- mp3 | m4a | opus | mp4
-  quality        text,                     -- '192' for kbps, '1080' for height, 'best'
-  status         text not null default 'queued'
-                 check (status in ('queued', 'fetching', 'downloading', 'processing',
-                                   'done', 'error', 'cancelled')),
-  size_bytes     bigint,
-  storage_key    text,                     -- R2 object key while the file exists
-  expires_at     timestamptz,              -- when the R2 object is deleted
-  error_code     text,
-  created_at     timestamptz not null default now(),
-  finished_at    timestamptz
+  id               uuid primary key default gen_random_uuid(),
+  user_id          uuid references public.profiles (id) on delete cascade,
+  client_id        text,                     -- anonymous browser id (X-Client-Id) before sign-in
+  video_id         text not null,            -- never the full URL
+  title            text,
+  channel          text,
+  duration_sec     integer,
+  thumbnail        text,
+  mode             text not null check (mode in ('audio', 'video')),
+  format           text not null,            -- mp3 | m4a | opus | mp4
+  quality          text,                     -- '192' for kbps, '1080' for height, 'best'
+  status           text not null default 'queued'
+                   check (status in ('queued', 'fetching', 'downloading', 'processing',
+                                     'done', 'error', 'cancelled')),
+  -- live progress, written by the worker
+  percent          double precision not null default 0,
+  downloaded_bytes bigint not null default 0,
+  total_bytes      bigint,
+  speed_bps        double precision,
+  eta_sec          integer,
+  detail           text,
+  cancel_requested boolean not null default false,
+  -- result
+  filename         text,
+  size_bytes       bigint,
+  storage_key      text,                     -- storage object key while the file exists
+  expires_at       timestamptz,              -- when the file is deleted (row stays as history)
+  error_code       text,
+  error_message    text,
+  created_at       timestamptz not null default now(),
+  started_at       timestamptz,
+  finished_at      timestamptz
 );
 
 create index if not exists downloads_user_created_idx
   on public.downloads (user_id, created_at desc);
+create index if not exists downloads_client_created_idx
+  on public.downloads (client_id, created_at desc);
 create index if not exists downloads_status_idx on public.downloads (status);
 create index if not exists downloads_created_idx on public.downloads (created_at desc);
 

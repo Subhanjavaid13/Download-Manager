@@ -86,17 +86,22 @@ Each check writes an event, so the admin dashboard can show verified vs unverifi
 - 36 backend tests, frontend lint + type check + production build all green.
 - Dockerfile with FFmpeg, `.env.example`, Supabase migration, CI workflow.
 
-### Phase 1: Solid single-user product (1 week)
+### Phase 1: Solid single-user product (done 2026-09-04)
 
 Goal: anyone with the link can use it reliably on a phone, no account yet.
 
-- Upload finished files to R2 and return a signed URL instead of streaming through the API. Lifecycle rule: delete after 1 hour.
-- Playlist detection: when a watch URL carries `list=`, ask "this video only" (whole-playlist download comes in Phase 6).
-- Proper cancel: delete partial files, free the worker slot.
-- Persist jobs in Postgres (SQLite locally) so a restart does not lose progress records.
-- Server-Sent Events for progress instead of 1-second polling (optional; polling is fine at small scale).
-- UX: empty state, copy-to-clipboard of the file link, "Download another" flow, loading skeletons, keyboard flow on desktop.
-- Exit criteria: 20 consecutive downloads (10 audio, 10 video) succeed on a phone over mobile data with no manual intervention.
+Shipped:
+- Jobs persist in a database (SQLite locally, Postgres in production) through SQLAlchemy. History survives restarts; a job that was mid-download when the server died is marked "interrupted" with a friendly message, and queued jobs are re-run.
+- Storage layer with two backends: local disk (API streams the file) and Cloudflare R2 (API redirects to a one-hour signed link, zero egress). Selected with `DM_STORAGE`. The R2 path is unit-tested against an S3 emulator.
+- Anonymous ownership: the browser generates a client id once, sends it as `X-Client-Id`, and only sees its own jobs. Signed-in users take over in Phase 2 with the same code path.
+- Files expire after the TTL; a janitor deletes them and keeps the history row. Expired links answer 410 with "download it again".
+- Cancel deletes partial files and frees the worker slot. Progress writes to the database are throttled to twice a second.
+- UI: recent downloads on this device with re-save, copy-link button, link-expiry note, playlist notice ("only this video"), and clamped video presets when a video has no HD.
+- Verified in a real phone-sized browser (Edge via Playwright): paste, preview, switch modes, download, save, reload, recent list, dark mode. Zero console errors. 48 backend tests.
+
+Deferred: Server-Sent Events for progress (polling every second is fine at this scale); whole-playlist downloads (Phase 6).
+
+Exit criteria for you to run: 20 consecutive downloads (10 audio, 10 video) on a phone over mobile data.
 
 ### Phase 2: Accounts and database (1 week)
 
@@ -176,7 +181,7 @@ Goal: know who signs up, whether their email is real, and what they do.
 | Phase | Duration | Cumulative |
 |---|---|---|
 | 0 Foundations | done | week 0 |
-| 1 Solid single-user product | 1 week | week 1 |
+| 1 Solid single-user product | done | week 0 |
 | 2 Accounts and database | 1 week | week 2 |
 | 3 Mobile-first UI/UX | 1 week | week 3 |
 | 4 Deployment and operations | 3 to 4 days | week 4 |

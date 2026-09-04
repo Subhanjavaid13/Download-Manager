@@ -71,14 +71,25 @@ export default function Downloader() {
   const [job, setJob] = useState<Job | null>(null);
   const [jobError, setJobError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [recent, setRecent] = useState<Job[]>([]);
 
-  // Backend status for the header dot.
+  const refreshRecent = useCallback(() => {
+    api
+      .listJobs(8)
+      .then(setRecent)
+      .catch(() => {
+        // history is a convenience; the page works without it
+      });
+  }, []);
+
+  // Backend status for the header dot, and this browser's recent downloads.
   useEffect(() => {
     api
       .health()
       .then(setHealth)
       .catch(() => setHealth("offline"));
-  }, []);
+    refreshRecent();
+  }, [refreshRecent]);
 
   // Changing the link invalidates the preview immediately.
   const updateUrl = useCallback((next: string) => {
@@ -117,13 +128,15 @@ export default function Downloader() {
     if (!jobId || !jobActive) return;
     const timer = setInterval(async () => {
       try {
-        setJob(await api.getJob(jobId));
+        const next = await api.getJob(jobId);
+        setJob(next);
+        if (TERMINAL.has(next.status)) refreshRecent();
       } catch {
         // keep the last known state; the next tick retries
       }
     }, 1000);
     return () => clearInterval(timer);
-  }, [jobId, jobActive]);
+  }, [jobId, jobActive, refreshRecent]);
 
   // Video presets that make sense for this video (never above what YouTube has).
   const maxAvailable = info?.available_heights.length
@@ -316,6 +329,22 @@ export default function Downloader() {
           </section>
         )}
 
+        {recent.filter((r) => r.id !== job?.id).length > 0 && (
+          <section className="mt-8">
+            <h2 className="mb-2 text-xs font-medium uppercase tracking-wider text-muted">
+              Recent on this device
+            </h2>
+            <ul className="divide-y divide-line-soft rounded-xl border border-line bg-surface">
+              {recent
+                .filter((r) => r.id !== job?.id)
+                .slice(0, 6)
+                .map((r) => (
+                  <RecentRow key={r.id} job={r} />
+                ))}
+            </ul>
+          </section>
+        )}
+
         <footer className="mt-10 text-xs leading-relaxed text-muted">
           For personal use with content you have the right to download. Files are deleted from the
           server one hour after they finish.
@@ -388,8 +417,44 @@ function Preview({ info }: { info: Info }) {
             <> · up to {Math.max(...info.available_heights)}p</>
           )}
         </p>
+        {info.playlist_id && (
+          <p className="mt-1 text-xs text-amber">
+            Part of a playlist. Only this video will be downloaded.
+          </p>
+        )}
       </div>
     </div>
+  );
+}
+
+function RecentRow({ job }: { job: Job }) {
+  const tone = job.mode === "audio" ? "text-amber" : "text-accent";
+  return (
+    <li className="flex items-center gap-3 px-3 py-2.5">
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-medium">{job.title ?? job.video_id}</p>
+        <p className="truncate text-xs text-muted">
+          <span className={`font-medium ${tone}`}>{job.label}</span>
+          {" · "}
+          {job.status === "done"
+            ? job.file_available
+              ? formatBytes(job.size_bytes)
+              : "link expired"
+            : (STAGE_LABEL[job.status] ?? job.status).toLowerCase()}
+        </p>
+      </div>
+      {job.file_available ? (
+        <a
+          href={api.fileUrl(job.id)}
+          download={job.filename ?? undefined}
+          className="shrink-0 rounded-md border border-line px-2.5 py-1.5 text-xs font-medium text-ink-2 hover:bg-bg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+        >
+          Save
+        </a>
+      ) : (
+        <StatusPill status={job.status} />
+      )}
+    </li>
   );
 }
 
@@ -523,17 +588,25 @@ function JobCard({
       )}
 
       {job.status === "done" && (
-        <div className="mt-4 flex items-center gap-3">
-          <a
-            href={api.fileUrl(job.id)}
-            download={job.filename ?? undefined}
-            className="rounded-lg bg-ok px-4 py-2.5 text-sm font-semibold text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-ok/50"
-          >
-            Save file{job.size_bytes ? ` · ${formatBytes(job.size_bytes)}` : ""}
-          </a>
-          <button type="button" onClick={onReset} className="text-sm font-medium text-ink-2 hover:underline">
-            Download another
-          </button>
+        <div className="mt-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <a
+              href={api.fileUrl(job.id)}
+              download={job.filename ?? undefined}
+              className="rounded-lg bg-ok px-4 py-2.5 text-sm font-semibold text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-ok/50"
+            >
+              Save file{job.size_bytes ? ` · ${formatBytes(job.size_bytes)}` : ""}
+            </a>
+            <CopyLinkButton url={api.fileUrl(job.id)} />
+            <button type="button" onClick={onReset} className="text-sm font-medium text-ink-2 hover:underline">
+              Download another
+            </button>
+          </div>
+          {job.expires_at && (
+            <p className="mt-2 text-xs text-muted">
+              Link works until {formatClock(job.expires_at)}. After that, download again.
+            </p>
+          )}
         </div>
       )}
 
@@ -555,6 +628,35 @@ function JobCard({
       )}
     </div>
   );
+}
+
+function CopyLinkButton({ url }: { url: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // Clipboard blocked; the Save button still works.
+    }
+  };
+  return (
+    <button
+      type="button"
+      onClick={copy}
+      className="rounded-lg border border-line px-3 py-2.5 text-sm font-medium text-ink-2 hover:bg-bg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+    >
+      {copied ? "Copied" : "Copy link"}
+    </button>
+  );
+}
+
+function formatClock(iso: string): string {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime())
+    ? ""
+    : d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 }
 
 function StatusPill({ status }: { status: Job["status"] }) {

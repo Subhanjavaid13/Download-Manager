@@ -62,6 +62,8 @@ class LocalStorage:
         target = target_dir / path.name
         if path.resolve() != target.resolve():
             shutil.move(str(path), str(target))
+            if path.parent != target_dir and not any(path.parent.iterdir()):
+                path.parent.rmdir()  # leave no empty work folder behind
         return StoredFile(key=f"{job_id}/{path.name}", size_bytes=target.stat().st_size)
 
     def download_url(self, key: str, filename: str, ttl_sec: int) -> str | None:
