@@ -19,9 +19,11 @@ from app.auth import auth_enabled
 from app.config import get_settings
 from app.core.downloader import Downloader
 from app.core.ffmpeg import find_ffmpeg
+from app.db import init_db, make_engine, make_session_factory
 from app.deps import limiter
 from app.jobs.store import JobStore
 from app.schemas import HealthResponse
+from app.storage import build_storage
 
 log = logging.getLogger("app")
 
@@ -35,26 +37,44 @@ async def lifespan(app: FastAPI):
     if not ffmpeg.available:
         log.warning("FFmpeg not found. MP3 conversion and video merging will fail.")
     app.state.ffmpeg = ffmpeg
+    app.state.downloader = Downloader(ffmpeg_location=ffmpeg.path if ffmpeg.available else None)
 
-    ffmpeg_dir = str(ffmpeg.path) if ffmpeg.available else None
-    app.state.downloader = Downloader(ffmpeg_location=ffmpeg_dir)
+    engine = make_engine(settings.database_url)
+    init_db(engine)
+    app.state.engine = engine
+
     settings.download_dir.mkdir(parents=True, exist_ok=True)
+    storage = build_storage(settings)
+    app.state.storage = storage
+
     app.state.jobs = JobStore(
-        app.state.downloader,
-        settings.download_dir,
+        downloader=app.state.downloader,
+        storage=storage,
+        session_factory=make_session_factory(engine),
+        work_dir=settings.download_dir / "_work",
         concurrency=settings.worker_concurrency,
         ttl_minutes=settings.job_ttl_minutes,
     )
-    log.info("ready: ffmpeg=%s yt-dlp=%s", ffmpeg.version, yt_dlp.version.__version__)
+    requeued = app.state.jobs.recover()
+    app.state.jobs.sweep()
+    log.info(
+        "ready: ffmpeg=%s yt-dlp=%s storage=%s db=%s requeued=%d",
+        ffmpeg.version,
+        yt_dlp.version.__version__,
+        storage.kind,
+        engine.dialect.name,
+        requeued,
+    )
     yield
     app.state.jobs.shutdown()
+    engine.dispose()
 
 
 def create_app() -> FastAPI:
     settings = get_settings()
     app = FastAPI(
         title=settings.app_name,
-        version="0.1.0",
+        version="0.2.0",
         lifespan=lifespan,
         docs_url="/docs" if settings.environment != "production" else None,
     )
@@ -65,7 +85,7 @@ def create_app() -> FastAPI:
         allow_origins=settings.cors_origins,
         allow_credentials=True,
         allow_methods=["GET", "POST", "DELETE"],
-        allow_headers=["Authorization", "Content-Type"],
+        allow_headers=["Authorization", "Content-Type", "X-Client-Id"],
         expose_headers=["Content-Disposition"],
     )
     app.include_router(info.router)
@@ -74,6 +94,7 @@ def create_app() -> FastAPI:
     @app.get("/health", response_model=HealthResponse, tags=["meta"])
     async def health() -> HealthResponse:
         ff = app.state.ffmpeg
+        dialect = app.state.engine.dialect.name
         return HealthResponse(
             status="ok",
             environment=settings.environment,
@@ -81,6 +102,8 @@ def create_app() -> FastAPI:
             ffmpeg_version=ff.version,
             ytdlp_version=yt_dlp.version.__version__,
             auth_enabled=auth_enabled(settings),
+            storage=app.state.storage.kind,
+            database=dialect if dialect in ("sqlite", "postgresql") else "other",
         )
 
     return app

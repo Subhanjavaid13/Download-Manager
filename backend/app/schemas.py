@@ -12,6 +12,8 @@ class HealthResponse(BaseModel):
     ffmpeg_version: str | None
     ytdlp_version: str
     auth_enabled: bool
+    storage: Literal["local", "r2"]
+    database: Literal["sqlite", "postgresql", "other"]
 
 
 class InfoResponse(BaseModel):
@@ -53,13 +55,24 @@ class ErrorOut(BaseModel):
 
 class JobResponse(BaseModel):
     id: str
+    video_id: str
     url: str
+    title: str | None
+    channel: str | None
+    thumbnail: str | None
+    duration_sec: int | None
     mode: str
+    format: str
+    quality: str | None
     label: str
     status: str
     progress: ProgressOut
     filename: str | None
     size_bytes: int | None
+    file_available: bool
+    file_url: str | None = Field(None, description="API path that streams or redirects to the file")
+    direct_url: str | None = Field(None, description="Signed storage link when R2 is active")
+    expires_at: str | None
     error: ErrorOut | None
-    created_at: float
-    finished_at: float | None
+    created_at: str
+    finished_at: str | None

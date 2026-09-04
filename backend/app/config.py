@@ -7,6 +7,7 @@ Locally, put them in `backend/.env` (see `.env.example`).
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -21,7 +22,7 @@ class Settings(BaseSettings):
     # Frontend origins allowed to call this API.
     cors_origins: list[str] = ["http://localhost:3000"]
 
-    # Where finished files are written before they are served or uploaded.
+    # Where files are written while a job runs (and kept, with local storage).
     download_dir: Path = Path("./downloads")
 
     # Abuse and cost controls (free tiers are small; keep these tight).
@@ -35,13 +36,24 @@ class Settings(BaseSettings):
     # Optional explicit path to ffmpeg (directory or binary). Auto-detected if empty.
     ffmpeg_location: str | None = None
 
+    # Database. SQLite locally, Supabase Postgres in production
+    # (use the "Transaction pooler" URI, port 6543, with the postgresql+psycopg driver).
+    database_url: str = "sqlite:///./dm.db"
+
+    # File storage for finished downloads.
+    #   local: files stay in download_dir and the API streams them.
+    #   r2:    files are uploaded to Cloudflare R2 and served by a signed link (zero egress).
+    storage: Literal["local", "r2"] = "local"
+    r2_account_id: str | None = None
+    r2_access_key_id: str | None = None
+    r2_secret_access_key: str | None = None
+    r2_bucket: str | None = None
+    r2_endpoint_url: str | None = None  # defaults to https://<account_id>.r2.cloudflarestorage.com
+
     # Auth (Phase 2). Leave empty to run the API without authentication in development.
     require_auth: bool = False
     supabase_url: str | None = None
     supabase_jwt_secret: str | None = None  # legacy HS256 secret; JWKS is used when empty
-
-    # Database (Phase 2). SQLite locally, Supabase Postgres in production.
-    database_url: str = "sqlite:///./dm.db"
 
 
 @lru_cache
