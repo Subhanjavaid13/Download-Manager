@@ -9,6 +9,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   backend:
     name: Backend (lint + tests)
@@ -47,8 +50,21 @@ jobs:
         env:
           NEXT_PUBLIC_API_URL: https://api.example.com
 
+  config:
+    name: Deployment config
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install --quiet pyyaml
+      # Parses render.yaml, vercel.json and every workflow, and fails if a
+      # secret was ever pasted into a tracked file. See the script's docstring.
+      - run: python .github/scripts/check_deploy_config.py
+
   docker:
-    name: Backend image builds
+    name: Backend image (build + start)
     runs-on: ubuntu-latest
     needs: backend
     steps:
@@ -58,5 +74,39 @@ jobs:
         with:
           context: backend
           push: false
+          load: true
+          tags: dm-api:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # The build succeeding proves very little. These steps prove the three
+      # things that actually break a Render deploy: the image starts, it binds
+      # $PORT, and FFmpeg is really in there.
+      - name: Start the container
+        run: docker run -d --name dm-api -p 8000:8000 -e PORT=8000 dm-api:ci
+
+      - name: Wait for /health
+        run: |
+          for _ in $(seq 1 30); do
+            if curl -fsS http://localhost:8000/health -o health.json; then break; fi
+            sleep 2
+          done
+          if [ ! -s health.json ]; then
+            echo "::error::the API never answered /health on the injected PORT within 60s"
+            exit 1
+          fi
+          jq . health.json
+          test "$(jq -r .status health.json)" = "ok"
+          test "$(jq -r .ffmpeg health.json)" = "true"        # FFmpeg really is in the image
+          test "$(jq -r .environment health.json)" = "production"
+          test "$(jq -r .ytdlp_version health.json)" != "null"
+
+      - name: Container must not run as root
+        run: |
+          uid=$(docker exec dm-api id -u)
+          echo "container uid: $uid"
+          test "$uid" != "0"
+
+      - name: Container logs
+        if: always()
+        run: docker logs dm-api || true

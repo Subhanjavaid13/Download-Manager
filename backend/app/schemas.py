@@ -16,6 +16,7 @@ class HealthResponse(BaseModel):
     signup_enabled: bool
     storage: Literal["local", "r2"]
     database: Literal["sqlite", "postgresql", "other"]
+    database_ok: bool
 
 
 class InfoResponse(BaseModel):

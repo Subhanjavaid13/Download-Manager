@@ -1,0 +1,131 @@
+# Render Blueprint for the Downloader Manager API.
+# Docs: https://render.com/docs/blueprint-spec
+#
+# How it is used
+#   Render Dashboard > New > Blueprint > pick this repo. Render reads this file,
+#   creates the service, and prompts once for every variable marked `sync: false`.
+#   After that, edit those values in the dashboard - later blueprint syncs leave
+#   `sync: false` variables alone, so nothing here can overwrite a secret.
+#
+# Nothing in this file is a secret. Values the API needs but must never be
+# committed (database URL, R2 keys, Supabase anon key) are declared by name only.
+#
+# The frontend is NOT here. It lives on Vercel; see docs/DEPLOYMENT.md.
+
+# Preview environments would spin up a second free instance per pull request and
+# would need their own copies of every secret. Turn them off until they are wanted.
+previews:
+  generation: "off"   # YAML would read a bare off as the boolean false
+
+services:
+  - name: downloader-manager-api
+    type: web
+    runtime: docker
+    plan: free # 512 MB RAM, spins down after 15 min idle. "starter" removes the spin-down.
+    region: singapore # closest Render region to the Supabase project (ap-northeast-2, Seoul)
+
+    # Paths are relative to the repo root, not to rootDir.
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+
+    branch: main
+    autoDeployTrigger: commit
+
+    # Only backend changes should restart the API. Frontend-only commits go to
+    # Vercel and must not bounce this service. (Edits to render.yaml itself
+    # always trigger a sync, regardless of this filter.)
+    buildFilter:
+      paths:
+        - backend/**
+      ignoredPaths:
+        - backend/tests/**
+        - backend/README.md
+
+    # /health reports FFmpeg, yt-dlp and a live "select 1" against the database.
+    # It answers 200 whenever the process is up, so a brief database blip does not
+    # restart a healthy container; check the database_ok field for that.
+    healthCheckPath: /health
+
+    envVars:
+      # --- runtime ------------------------------------------------------------
+      - key: DM_ENVIRONMENT
+        value: production # also disables /docs and /redoc
+      - key: DM_LOG_LEVEL
+        value: info
+
+      # Uvicorn is started with --proxy-headers, but it only trusts
+      # X-Forwarded-For from the addresses listed here. On Render the container
+      # is reachable only through Render's load balancer, so "*" is what makes
+      # the per-IP rate limit see real clients. Without it every request looks
+      # like it came from the balancer and 10 jobs/minute becomes a global cap.
+      - key: FORWARDED_ALLOW_IPS
+        value: "*"
+
+      # --- CORS ---------------------------------------------------------------
+      # A JSON array, exactly the origins the browser will call from, scheme
+      # included, no trailing slash. Example:
+      #   ["https://app.yourdomain.com"]
+      # Add https://<project>.vercel.app too if you use the Vercel URL directly.
+      # Never "*": the API sends credentials, and a wildcard would let any site
+      # read a signed-in user's history.
+      - key: DM_CORS_ORIGINS
+        sync: false
+
+      # --- database -----------------------------------------------------------
+      # Supabase > Connect > Transaction pooler (port 6543). Apply the schema
+      # first with backend/scripts/migrate.py or the API refuses to start.
+      - key: DM_DATABASE_URL
+        sync: false
+
+      # --- file delivery (Cloudflare R2) --------------------------------------
+      - key: DM_STORAGE
+        value: r2
+      - key: DM_R2_BUCKET
+        value: downloader-manager-files # must match the bucket you create
+      - key: DM_R2_ACCOUNT_ID
+        sync: false
+      - key: DM_R2_ACCESS_KEY_ID
+        sync: false
+      - key: DM_R2_SECRET_ACCESS_KEY
+        sync: false
+
+      # --- auth ---------------------------------------------------------------
+      - key: DM_SUPABASE_URL
+        value: https://qzngtrpdqtvgrbaxtzar.supabase.co
+      # Public "anon"/publishable key. Not dangerous, but still not in git.
+      - key: DM_SUPABASE_ANON_KEY
+        sync: false
+      - key: DM_REQUIRE_AUTH
+        value: "false" # true = no guest downloads at all
+      - key: DM_ANON_DAILY_LIMIT
+        value: "3"
+      - key: DM_CHECK_DISPOSABLE_EMAIL
+        value: "true"
+      - key: DM_CHECK_MX
+        value: "true"
+      # Random 256-bit value generated once by Render, never shown in this repo.
+      # Changing it later re-anonymises IPs, which breaks comparison with older
+      # rows in the events table but nothing else.
+      - key: DM_IP_HASH_SALT
+        generateValue: true
+
+      # --- cost and abuse controls -------------------------------------------
+      # Tuned for the free plan's 512 MB of RAM and ephemeral disk. One worker,
+      # because a parallel FFmpeg remux is the fastest way to hit the memory cap.
+      - key: DM_WORKER_CONCURRENCY
+        value: "1"
+      - key: DM_MAX_FILE_MB
+        value: "300"
+      - key: DM_MAX_DURATION_SEC
+        value: "10800" # 3 hours
+      - key: DM_JOB_TTL_MINUTES
+        value: "60" # matches the R2 lifecycle rule
+      - key: DM_RATE_LIMIT_INFO
+        value: 30/minute
+      - key: DM_RATE_LIMIT_JOBS
+        value: 10/minute
+
+      # Not declared here on purpose, add in the dashboard only if you use them:
+      #   DM_TURNSTILE_SECRET    Cloudflare Turnstile secret for the sign-up CAPTCHA
+      #   DM_R2_ENDPOINT_URL     only when the endpoint is not <account>.r2.cloudflarestorage.com
+      #   DM_SUPABASE_JWT_SECRET only for legacy HS256 Supabase projects

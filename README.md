@@ -88,7 +88,33 @@ The API refuses to start against a Postgres database that has no schema, so you 
 
 ## Deploy
 
-See [docs/ROADMAP.md](docs/ROADMAP.md), Phase 4. Short version: Vercel for `frontend/`, Render for `backend/Dockerfile`, Supabase for auth and data, Cloudflare R2 for file delivery. All free tiers.
+**[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) is the runbook.** Follow it once, top
+to bottom, in about an hour. Everything below is free.
+
+| Piece | Where | Config in the repo |
+|---|---|---|
+| `frontend/` | Vercel Hobby, root directory `frontend` | [frontend/vercel.json](frontend/vercel.json) (headers, region) |
+| `backend/` | Render free web service, Docker | [render.yaml](render.yaml) Blueprint |
+| Database, auth | Supabase | [supabase/migrations](supabase/migrations) |
+| Finished files | Cloudflare R2, one-hour signed links | `DM_STORAGE=r2` |
+| Uptime | UptimeRobot on `/health`, every 5 minutes | keeps Render and Supabase awake |
+
+`render.yaml` declares every secret by name with `sync: false`, so Render prompts
+for the values once and nothing sensitive is in git. Pushing to `main` deploys
+both halves automatically.
+
+Two scheduled workflows keep it running unattended:
+
+- **[nightly-ytdlp.yml](.github/workflows/nightly-ytdlp.yml)** compares
+  `backend/uv.lock` against PyPI and opens a tested pull request when yt-dlp has
+  moved. YouTube breaks old versions within weeks, and the image installs with
+  `uv sync --frozen`, so a plain rebuild would not help - the lockfile has to move.
+- **[backup-database.yml](.github/workflows/backup-database.yml)** runs `pg_dump`
+  every Sunday and stores the gzipped dump in R2. The Supabase free tier has no
+  backups of its own.
+
+To try the production image locally: `docker compose up --build`, then
+http://localhost:8000/health.
 
 ## Legal
 

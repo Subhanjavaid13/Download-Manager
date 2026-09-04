@@ -1,19 +1,30 @@
-# Local production-like run of the backend (same image Render uses).
+# Local production-like run of the backend (the same image Render builds).
 #   docker compose up --build
 # API: http://localhost:8000/health
+#
+# Useful before a deploy: this is the fastest way to prove the image starts,
+# finds FFmpeg, and answers /health without touching Render.
 services:
   api:
     build: ./backend
     ports:
       - "8000:8000"
+    # Optional. Anything in backend/.env is loaded first; the values below win.
     env_file:
       - path: ./backend/.env
         required: false
     environment:
       DM_CORS_ORIGINS: '["http://localhost:3000"]'
+      # /app is read-only to the app user in the image, so all writable state
+      # lives under /data. Export DM_DATABASE_URL in your shell to point this
+      # run at Supabase Postgres instead.
       DM_DOWNLOAD_DIR: /data/downloads
+      DM_DATABASE_URL: ${DM_DATABASE_URL:-sqlite:////data/dm.db}
+      # No proxy in front of the container locally, so keep uvicorn's default
+      # of trusting nobody. On Render this is set to "*". See docs/DEPLOYMENT.md.
+      FORWARDED_ALLOW_IPS: 127.0.0.1
     volumes:
-      - downloads:/data/downloads
+      - data:/data
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)"]
       interval: 30s
@@ -21,4 +32,4 @@ services:
       retries: 3
 
 volumes:
-  downloads:
+  data:

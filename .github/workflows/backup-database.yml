@@ -1,0 +1,164 @@
+name: Weekly database backup
+
+# The Supabase free tier has no backups at all. This dumps the database every
+# Sunday and stores the gzipped dump in Cloudflare R2, which is free to write
+# and free to read back.
+#
+# Repository secrets it needs (Settings > Secrets and variables > Actions).
+# Values are never printed; GitHub masks them in the log.
+#
+#   SUPABASE_DB_URL       Supabase > Connect > "Session pooler" URI, port 5432.
+#                         NOT the transaction pooler on 6543: that has no session
+#                         state and pg_dump's COPY protocol fails against it.
+#   R2_ACCOUNT_ID         Cloudflare account id (the R2 endpoint host).
+#   R2_ACCESS_KEY_ID      R2 API token scoped to the backup bucket.
+#   R2_SECRET_ACCESS_KEY  ditto.
+#   R2_BACKUP_BUCKET      e.g. downloader-manager-backups. Keep it separate from
+#                         the delivery bucket: that one has a 1-hour delete rule.
+#
+# Restore: see the "Rollback" section of docs/DEPLOYMENT.md.
+
+on:
+  schedule:
+    - cron: "31 4 * * 0" # Sundays, 04:31 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: backup-database
+  cancel-in-progress: false
+
+jobs:
+  dump:
+    name: pg_dump to R2
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+      PGSSLMODE: require
+      PGCONNECT_TIMEOUT: "30"
+      # The AWS CLI speaks to R2 through its S3 API.
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: auto
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+      R2_BACKUP_BUCKET: ${{ secrets.R2_BACKUP_BUCKET }}
+
+    steps:
+      - name: Check every secret is set
+        run: |
+          missing=""
+          for name in SUPABASE_DB_URL AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY \
+                      R2_ACCOUNT_ID R2_BACKUP_BUCKET; do
+            if [ -z "${!name}" ]; then missing="$missing $name"; fi
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::missing repository secrets:$missing"
+            exit 1
+          fi
+
+      - name: Install the PostgreSQL 17 client
+        # The runner ships an older pg_dump, and pg_dump refuses to dump a server
+        # newer than itself. Supabase projects are on 15 or 17, so take 17.
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+            | sudo tee /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc >/dev/null
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] \
+          https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends postgresql-client-17
+          pg_dump --version
+
+      - name: Dump the database
+        id: dump
+        run: |
+          stamp=$(date -u +%Y%m%dT%H%M%SZ)
+          file="dm-${stamp}.sql"
+
+          # public  = the app's own tables (profiles, downloads, events).
+          # auth    = Supabase's user records, which cannot be recreated.
+          # Owners and grants are Supabase-managed, so they are left out; a
+          # restore re-applies them from supabase/migrations.
+          if ! pg_dump "$SUPABASE_DB_URL" \
+                --no-owner --no-privileges \
+                --schema=public --schema=auth \
+                --file="$file"; then
+            echo "::warning::could not dump the auth schema; falling back to public only"
+            pg_dump "$SUPABASE_DB_URL" --no-owner --no-privileges \
+              --schema=public --file="$file"
+          fi
+
+          # A zero-byte or near-empty dump is the failure mode that goes
+          # unnoticed for months. Catch it here instead.
+          bytes=$(wc -c < "$file")
+          if [ "$bytes" -lt 2000 ]; then
+            echo "::error::dump is only ${bytes} bytes - refusing to store it"
+            exit 1
+          fi
+          grep -q "CREATE TABLE" "$file" || {
+            echo "::error::dump contains no CREATE TABLE statements"
+            exit 1
+          }
+
+          gzip -9 "$file"
+          echo "file=${file}.gz" >> "$GITHUB_OUTPUT"
+          echo "key=backups/$(date -u +%Y)/${file}.gz" >> "$GITHUB_OUTPUT"
+          echo "bytes=$(wc -c < "${file}.gz")" >> "$GITHUB_OUTPUT"
+
+      - name: Upload to R2
+        env:
+          FILE: ${{ steps.dump.outputs.file }}
+          KEY: ${{ steps.dump.outputs.key }}
+        run: |
+          endpoint="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+          # R2 implements CRC32; asking for it explicitly avoids the AWS CLI
+          # picking a checksum algorithm R2 does not accept.
+          aws s3 cp "$FILE" "s3://${R2_BACKUP_BUCKET}/${KEY}" \
+            --endpoint-url "$endpoint" \
+            --checksum-algorithm CRC32
+          # Prove it is really there before calling the backup a success.
+          aws s3 ls "s3://${R2_BACKUP_BUCKET}/${KEY}" --endpoint-url "$endpoint"
+
+      - name: Summary
+        env:
+          KEY: ${{ steps.dump.outputs.key }}
+          BYTES: ${{ steps.dump.outputs.bytes }}
+        run: |
+          {
+            echo "### Database backup"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Object | \`${KEY}\` |"
+            echo "| Bucket | \`${R2_BACKUP_BUCKET}\` |"
+            echo "| Size | ${BYTES} bytes gzipped |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Open an issue if the backup failed
+        if: failure()
+        run: |
+          title="Weekly database backup failed"
+          if gh issue list --state open --limit 100 --json title --jq '.[].title' \
+              | grep -qxF "$title"; then
+            echo "Issue already open."
+            exit 0
+          fi
+          run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          gh issue create --title "$title" --body "$(printf '%s\n' \
+            "The weekly \`pg_dump\` to R2 did not complete." \
+            "" \
+            "Run: ${run_url}" \
+            "" \
+            "Usual causes, in order:" \
+            "1. \`SUPABASE_DB_URL\` points at the transaction pooler (6543)." \
+            "   pg_dump needs the session pooler on 5432." \
+            "2. The Supabase project paused after 7 days idle - open the" \
+            "   dashboard once to wake it, and check the UptimeRobot monitor." \
+            "3. The R2 API token expired or lost access to the bucket." \
+            "" \
+            "There is no other copy of this database. Fix it this week.")"

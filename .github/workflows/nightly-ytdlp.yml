@@ -1,0 +1,153 @@
+name: Nightly yt-dlp
+
+# YouTube changes its player often enough that a yt-dlp release goes stale in
+# weeks, and every stale release shows up as "download failed" for real users.
+#
+# A plain nightly rebuild would not help: the image installs with
+# `uv sync --frozen`, so the version in backend/uv.lock is what ships. The
+# lockfile has to move first. So every night this workflow:
+#
+#   1. compares backend/uv.lock against the latest release on PyPI
+#   2. if PyPI is ahead: bumps the lock, runs lint and the full test suite
+#   3. opens a pull request with the bump (or an issue if it cannot)
+#
+# Merging that PR to main is what triggers Render to rebuild and redeploy.
+#
+# Repo settings this needs, once:
+#   Settings > Actions > General > Workflow permissions
+#     - "Read and write permissions"
+#     - "Allow GitHub Actions to create and approve pull requests"
+# Optional: a repo secret named GH_PAT (a fine-grained PAT with Contents and
+# Pull requests write). Without it the PR is opened by GITHUB_TOKEN, and GitHub
+# deliberately does not run CI on such PRs - which is why this job runs the
+# tests itself before opening one.
+
+on:
+  schedule:
+    - cron: "17 3 * * *" # 03:17 UTC daily, off the top of the hour
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: nightly-ytdlp
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    name: Bump yt-dlp if a newer release exists
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+
+      - name: Compare backend/uv.lock against PyPI
+        id: versions
+        run: python3 .github/scripts/ytdlp_versions.py
+
+      - name: Nothing to do
+        if: steps.versions.outputs.outdated != 'true'
+        run: |
+          echo "yt-dlp ${{ steps.versions.outputs.locked }} is the latest release." \
+            >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: astral-sh/setup-uv@v6
+        if: steps.versions.outputs.outdated == 'true'
+        with:
+          enable-cache: true
+
+      - name: Bump the lockfile
+        if: steps.versions.outputs.outdated == 'true'
+        working-directory: backend
+        run: uv lock --upgrade-package yt-dlp
+
+      - name: Lint and test against the new version
+        if: steps.versions.outputs.outdated == 'true'
+        working-directory: backend
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          uv sync --frozen
+          uv run ruff check .
+          uv run pytest -q
+
+      - name: Open a pull request
+        if: steps.versions.outputs.outdated == 'true'
+        env:
+          LOCKED: ${{ steps.versions.outputs.locked }}
+          LATEST: ${{ steps.versions.outputs.latest }}
+        run: |
+          branch="chore/yt-dlp-${LATEST}"
+
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1 \
+            && gh pr view "$branch" --json state --jq .state 2>/dev/null | grep -q OPEN; then
+            echo "A pull request for $branch is already open." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add backend/uv.lock
+          git commit -m "chore(backend): yt-dlp ${LOCKED} -> ${LATEST}"
+          git push --force -u origin "$branch"
+
+          body=$(printf '%s\n' \
+            "Nightly refresh: yt-dlp \`${LOCKED}\` -> \`${LATEST}\`." \
+            "" \
+            "Only \`backend/uv.lock\` changed. The nightly job already ran" \
+            "\`ruff check\` and the full backend test suite against the new version." \
+            "" \
+            "GitHub does not run CI on pull requests opened with \`GITHUB_TOKEN\`," \
+            "so if the checks look empty that is expected - push an empty commit," \
+            "or set a \`GH_PAT\` secret, if you want the usual CI run." \
+            "" \
+            "Merging this triggers the Render redeploy that puts the new yt-dlp" \
+            "in production. See docs/DEPLOYMENT.md.")
+
+          gh pr create \
+            --title "chore(backend): yt-dlp ${LOCKED} -> ${LATEST}" \
+            --body "$body" \
+            --base main \
+            --head "$branch" \
+          || gh issue create \
+            --title "yt-dlp ${LATEST} is available (${LOCKED} is deployed)" \
+            --body "$(printf '%s\n' \
+                "The nightly job could not open a pull request - most likely" \
+                "\"Allow GitHub Actions to create and approve pull requests\" is off" \
+                "in Settings > Actions > General." \
+                "" \
+                "Branch \`${branch}\` is pushed and tested. Open the PR by hand, or run:" \
+                "" \
+                "    cd backend && uv lock --upgrade-package yt-dlp")"
+
+      - name: Report a failed refresh
+        if: failure() && steps.versions.outputs.outdated == 'true'
+        env:
+          LATEST: ${{ steps.versions.outputs.latest }}
+        run: |
+          title="Nightly yt-dlp bump to ${LATEST} failed"
+
+          # One open issue per version, not one per night.
+          if gh issue list --state open --limit 100 --json title --jq '.[].title' \
+              | grep -qxF "$title"; then
+            echo "Issue already open."
+            exit 0
+          fi
+
+          run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          gh issue create --title "$title" --body "$(printf '%s\n' \
+            "The nightly job failed while upgrading yt-dlp to \`${LATEST}\`." \
+            "" \
+            "Run: ${run_url}" \
+            "" \
+            "Until this is fixed, production keeps running the older yt-dlp." \
+            "That usually shows up as a rise in \`download_failed\` events and" \
+            "as a stale \`ytdlp_version\` on \`/health\`.")"

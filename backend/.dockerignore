@@ -1,0 +1,37 @@
+# Everything here stays out of the Docker build context.
+# Two reasons: a smaller, faster build, and no chance of a secret or a local
+# database file being copied into a published image by a future COPY line.
+
+# Local virtualenv (hundreds of MB) - the image builds its own.
+.venv/
+venv/
+env/
+
+# Python caches and test artefacts
+__pycache__/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Secrets and local state. NEVER let these near a build context.
+.env
+.env.*
+!.env.example
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Local download output
+downloads/
+
+# Not needed at runtime
+tests/
+README.md
+Dockerfile
+.dockerignore

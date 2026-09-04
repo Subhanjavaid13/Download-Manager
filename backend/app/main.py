@@ -10,9 +10,11 @@ from contextlib import asynccontextmanager
 
 import yt_dlp.version
 from fastapi import FastAPI
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
+from sqlalchemy import text
 
 from app.api import auth as auth_api
 from app.api import info, jobs
@@ -28,6 +30,17 @@ from app.services.accounts import Accounts
 from app.storage import build_storage
 
 log = logging.getLogger("app")
+
+
+def _ping_database(engine) -> bool:  # noqa: ANN001
+    """One cheap round-trip. Never raises: the caller reports the result instead."""
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("select 1"))
+        return True
+    except Exception:  # noqa: BLE001
+        log.warning("health check: database unreachable", exc_info=True)
+        return False
 
 
 @asynccontextmanager
@@ -112,9 +125,18 @@ def create_app() -> FastAPI:
 
     @app.get("/health", response_model=HealthResponse, tags=["meta"])
     async def health() -> HealthResponse:
+        """Liveness plus a real database round-trip.
+
+        Always answers 200 while the process is up, so a brief database blip does
+        not make the platform restart a container that is otherwise fine; the
+        database result is reported as a field instead. That round-trip matters
+        for more than reporting: an uptime monitor hitting this endpoint is what
+        keeps a free-tier Supabase project from pausing after 7 idle days.
+        """
         settings = get_settings()  # read fresh so config changes show up without a restart
         ff = app.state.ffmpeg
         dialect = app.state.engine.dialect.name
+        database_ok = await run_in_threadpool(_ping_database, app.state.engine)
         return HealthResponse(
             status="ok",
             environment=settings.environment,
@@ -126,6 +148,7 @@ def create_app() -> FastAPI:
             signup_enabled=bool(settings.supabase_url and settings.supabase_anon_key),
             storage=app.state.storage.kind,
             database=dialect if dialect in ("sqlite", "postgresql") else "other",
+            database_ok=database_ok,
         )
 
     return app

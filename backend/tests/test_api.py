@@ -63,6 +63,7 @@ def test_health(client: TestClient) -> None:
     assert body["auth_enabled"] is False
     assert body["storage"] == "local"
     assert body["database"] == "sqlite"
+    assert body["database_ok"] is True  # a real "select 1", not a cached flag
 
 
 def test_info_rejects_non_youtube(client: TestClient) -> None:
