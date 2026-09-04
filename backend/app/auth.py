@@ -45,9 +45,7 @@ def _decode(token: str, settings: Settings) -> dict:
         )
     if settings.supabase_url:
         key = _jwks_client(settings.supabase_url).get_signing_key_from_jwt(token)
-        return jwt.decode(
-            token, key.key, algorithms=["ES256", "RS256"], audience="authenticated"
-        )
+        return jwt.decode(token, key.key, algorithms=["ES256", "RS256"], audience="authenticated")
     raise RuntimeError("auth is not configured")
 
 
@@ -69,7 +67,9 @@ def get_current_user(
     try:
         payload = _decode(creds.credentials, settings)
     except jwt.PyJWTError as exc:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Your session expired. Sign in again.") from exc
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED, "Your session expired. Sign in again."
+        ) from exc
 
     meta = payload.get("user_metadata") or {}
     return User(

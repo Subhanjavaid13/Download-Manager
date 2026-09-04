@@ -133,21 +133,20 @@ export default function Downloader() {
     () => (maxAvailable ? VIDEO_HEIGHTS.filter((h) => h <= maxAvailable) : VIDEO_HEIGHTS),
     [maxAvailable],
   );
-  useEffect(() => {
-    if (height !== null && maxAvailable && height > maxAvailable) {
-      const best = videoPresets[videoPresets.length - 1] ?? null;
-      setHeight(best);
-    }
-  }, [height, maxAvailable, videoPresets]);
+  // If the user picked 1080p but this video tops out at 480p, use the best preset that exists.
+  const effectiveHeight: VideoHeight | null =
+    height !== null && maxAvailable && height > maxAvailable
+      ? (videoPresets[videoPresets.length - 1] ?? null)
+      : height;
 
   const pasteFromClipboard = useCallback(async () => {
     try {
       const text = await navigator.clipboard.readText();
-      if (text) setUrl(extractUrl(text));
+      if (text) updateUrl(extractUrl(text));
     } catch {
       // Clipboard permission denied; the user can paste manually.
     }
-  }, []);
+  }, [updateUrl]);
 
   const canSubmit = !!info && !loadingInfo && !submitting && !jobActive;
 
@@ -162,7 +161,7 @@ export default function Downloader() {
             const opt = AUDIO_OPTIONS.find((o) => o.id === audioChoice) ?? AUDIO_OPTIONS[1];
             return { ...base, audio_format: opt.audio_format, audio_bitrate: opt.audio_bitrate };
           })()
-        : { ...base, video_height: height };
+        : { ...base, video_height: effectiveHeight };
     try {
       setJob(await api.createJob(body));
     } catch (e) {
@@ -170,7 +169,7 @@ export default function Downloader() {
     } finally {
       setSubmitting(false);
     }
-  }, [canSubmit, url, mode, audioChoice, height]);
+  }, [canSubmit, url, mode, audioChoice, effectiveHeight]);
 
   const cancel = useCallback(async () => {
     if (!jobId) return;
@@ -192,8 +191,8 @@ export default function Downloader() {
           const o = AUDIO_OPTIONS.find((x) => x.id === audioChoice);
           return o ? `${o.label} · ${o.sub}` : "";
         })()
-      : height
-        ? `MP4 · ${height}p`
+      : effectiveHeight
+        ? `MP4 · ${effectiveHeight}p`
         : "MP4 · best";
 
   return (
@@ -220,7 +219,7 @@ export default function Downloader() {
               enterKeyHint="go"
               placeholder="https://youtu.be/…"
               value={url}
-              onChange={(e) => setUrl(e.target.value)}
+              onChange={(e) => updateUrl(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && submit()}
               className="min-w-0 flex-1 rounded-lg border border-line bg-bg px-3 py-2.5 text-base text-ink placeholder:text-muted focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/30"
             />
@@ -284,7 +283,7 @@ export default function Downloader() {
               {videoPresets.map((h) => (
                 <Chip
                   key={h}
-                  active={height === h}
+                  active={effectiveHeight === h}
                   tone="blue"
                   onClick={() => setHeight(h)}
                   label={`${h}p`}
@@ -292,7 +291,7 @@ export default function Downloader() {
                 />
               ))}
               <Chip
-                active={height === null}
+                active={effectiveHeight === null}
                 tone="blue"
                 onClick={() => setHeight(null)}
                 label="Best"

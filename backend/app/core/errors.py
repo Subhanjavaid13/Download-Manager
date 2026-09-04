@@ -24,7 +24,9 @@ _RULES: list[tuple[tuple[str, ...], FriendlyError]] = [
     ),
     (
         ("confirm your age", "age-restricted", "age restricted"),
-        FriendlyError("age_restricted", "This video is age-restricted and needs a signed-in account."),
+        FriendlyError(
+            "age_restricted", "This video is age-restricted and needs a signed-in account."
+        ),
     ),
     (
         ("not available in your country", "geo", "blocked it in your country"),

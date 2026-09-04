@@ -1,229 +1,271 @@
-# PRD: YouTube Audio/Video Downloader ("downloader-manager")
+# PRD: Downloader Manager (web)
 
 | Field | Value |
 |---|---|
-| Status | Draft v1 |
+| Status | Draft v2 (supersedes v1, the local desktop tool) |
 | Date | 2026-09-04 |
 | Owner | Subhan javaid |
-| Platform | Windows 11 first, cross-platform by design |
-| Language | Python 3.11+ (3.14 installed locally) |
+| Platform | Mobile-first web app (PWA), works on desktop |
+| Backend | Python 3.11+ / FastAPI / yt-dlp / FFmpeg |
+| Frontend | Next.js 16 / TypeScript / Tailwind 4 |
+| Roadmap | [ROADMAP.md](ROADMAP.md) |
 
 ---
 
 ## 1. Summary
 
-A free, local desktop tool where the user pastes a YouTube link, picks **Audio** or **Video**, picks a quality, and gets a clean file on disk. Audio mode is the primary use case (saving music as MP3/M4A). Video mode saves MP4 at a chosen resolution.
+A hosted, mobile-first web app. A signed-in user pastes a YouTube link, picks **Audio** or **Video**, picks a quality, and gets a clean, tagged file. Audio (music as MP3 or M4A) is the primary use case. Video saves MP4 at a chosen resolution.
 
-Everything runs on the user's machine. No accounts, no server, no cost.
+Users have accounts with verified email, a personal download history, and a daily quota. The operator has a dashboard showing sign ups, email authenticity, and download activity. Everything runs on free tiers at launch.
 
-## 2. Feasibility (short answer: yes)
+## 2. Feasibility
 
-| Need | Solution | Cost |
+Yes, and every component is free at small scale.
+
+| Need | Solution | Cost at launch |
 |---|---|---|
-| Fetch streams from YouTube | `yt-dlp` (open-source, actively maintained, handles YouTube's frequent changes) | Free |
-| Convert to MP3, merge video+audio, embed cover art | FFmpeg (open-source) | Free |
-| CLI | `typer` + `rich` | Free |
-| Desktop GUI | `customtkinter` (pure Python, modern look) | Free |
-| Single .exe for Windows | PyInstaller | Free |
+| Fetch streams from YouTube | `yt-dlp` (actively maintained, tracks YouTube changes) | Free |
+| MP3 conversion, merge video + audio, cover art | FFmpeg in the backend Docker image | Free |
+| API | FastAPI (Python) | Free |
+| UI | Next.js + Tailwind, installable PWA | Free |
+| Accounts, email verification, database | Supabase (Postgres + Auth) | Free tier |
+| File delivery | Cloudflare R2, signed links, 1-hour lifetime | Free tier, zero egress |
+| Hosting | Vercel (frontend), Render (backend), later a VM for the worker | Free tiers |
+| Analytics | PostHog + own `events` table, Sentry | Free tiers |
 
-**Why not pytube / youtube-dl?** Both break often when YouTube changes its player. `yt-dlp` is the maintained fork that the whole ecosystem relies on; it also supports playlists, Shorts, YouTube Music, thumbnails, metadata, and browser cookies out of the box.
+**Why not pytube / youtube-dl?** Both break often when YouTube changes its player. `yt-dlp` is the maintained fork the ecosystem relies on and supports playlists, Shorts, YouTube Music, thumbnails, metadata, and browser cookies out of the box.
 
-**Why is FFmpeg mandatory?** YouTube serves high quality as *separate* video and audio streams (DASH). FFmpeg merges them, and it is the only way to produce MP3 (YouTube never serves MP3 directly).
+**Why is FFmpeg mandatory?** YouTube serves high quality as separate video and audio streams (DASH). FFmpeg merges them, and it is the only way to produce MP3.
+
+**What is different about hosting it?** The backend downloads from YouTube and then the user downloads from you, so bandwidth is the real cost, and YouTube sometimes blocks datacenter IPs. Both are handled in the roadmap: R2 for delivery, and a worker that can move to a VM with a clean IP.
 
 ## 3. Goals
 
-1. Paste any YouTube URL (watch, youtu.be, Shorts, playlist, music.youtube.com) and download it in one click.
-2. Audio mode: MP3 (compatible everywhere) or M4A/Opus (no re-encode, best fidelity).
-3. Video mode: MP4 at 360p / 480p / 720p / 1080p / best available.
-4. Show live progress (percent, speed, ETA) and clear error messages.
-5. Embed title, artist, album, and cover art into audio files so music players show them correctly.
-6. Work fully offline apart from the download itself; no login required by default.
+1. Paste any YouTube URL (watch, youtu.be, Shorts, music.youtube.com) and download it in two taps on a phone.
+2. Audio: MP3 (compatible everywhere) or M4A / Opus (no re-encode, best fidelity), with title, artist, and square cover art embedded.
+3. Video: MP4 at 360p to 2160p or best available, only offering resolutions the video actually has.
+4. Live progress (stage, percent, speed, ETA) and plain-English errors.
+5. Sign up and sign in with email + password or Google, with email verification before downloading.
+6. Personal download history that follows the user across devices.
+7. Operator dashboard: sign ups (verified / unverified / disposable), active users, downloads, failure rates.
+8. Run on free tiers, with a known paid step when it outgrows them.
 
-## 4. Non-goals (v1)
+## 4. Non-goals (v2)
 
-- Downloading from sites other than YouTube (yt-dlp supports 1000+ sites; we may expose this later but will not test it).
+- Sites other than YouTube. yt-dlp supports over a thousand; we do not test or expose them yet.
 - DRM'd or paid content (YouTube Premium, Movies). Not possible and not attempted.
-- Cloud sync, accounts, or a hosted web service.
 - Editing or trimming media.
-- Bypassing YouTube age or region restrictions beyond what yt-dlp does normally.
+- Bypassing age or region restrictions beyond what yt-dlp does normally.
+- Public, marketed "download any song" service. This is a personal-use tool for a small group.
+- Native app store apps (optional Phase 7).
 
-## 5. Target user
+## 5. Target users
 
-A single person on Windows who wants a simple "paste link, get file" tool for personal use. Comfortable installing Python once. Not a power user of the command line.
+- **Primary:** the owner and a small circle of people, mostly on Android and iPhone, who want a music file from a link with no ads and no sketchy sites.
+- **Operator:** the owner, who wants to see who signed up, whether their email is real, and what they download.
 
 ## 6. User stories
 
 | ID | Story | Priority |
 |---|---|---|
-| US1 | As a user I paste a video link, choose Audio > MP3, and get `Artist - Title.mp3` in my Music folder. | Must |
-| US2 | As a user I choose Video > 1080p and get an MP4 that plays in Windows Media Player and VLC. | Must |
-| US3 | As a user I see a progress bar with speed and ETA while it downloads. | Must |
-| US4 | As a user I paste a playlist link and every item downloads with the same settings. | Should |
-| US5 | As a user I pick the output folder once and the app remembers it. | Should |
-| US6 | As a user my MP3s show the cover art and artist in my music player. | Should |
-| US7 | As a user I get a plain-English error if the video is private, removed, or my internet is down. | Must |
-| US8 | As a user I can queue several links and they download one after another. | Could |
-| US9 | As a user I can update the downloader engine from inside the app when YouTube changes. | Should |
+| US1 | I paste a link on my phone, tap Audio, tap Download, and save an MP3 with cover art. | Must |
+| US2 | I choose Video and 1080p and get an MP4 that plays on my phone and in VLC. | Must |
+| US3 | I see a progress bar with speed and ETA while it downloads, and I can cancel. | Must |
+| US4 | I share a video from the YouTube app straight into Downloader Manager. | Should |
+| US5 | I sign up with my email, get a verification mail, and can download only after confirming. | Must |
+| US6 | I sign in with Google instead of a password. | Should |
+| US7 | I see my past downloads and can re-save a file while it still exists. | Should |
+| US8 | I get a plain-English error if the video is private, removed, or YouTube is blocking. | Must |
+| US9 | I install it to my home screen and it opens like an app, in dark mode if my phone is dark. | Should |
+| US10 | As the operator, I see how many real (verified, non-disposable) users signed up this week and what they downloaded. | Must |
+| US11 | As the operator, a broken yt-dlp shows up as a failure spike and an alert, not as silent user complaints. | Should |
+| US12 | I paste a playlist and download every item. | Could (Phase 6) |
 
 ## 7. Functional requirements
 
 ### 7.1 Input
-- **FR1.1** Accept a single URL pasted into a text field or passed on the command line.
-- **FR1.2** Recognise: `youtube.com/watch?v=`, `youtu.be/`, `youtube.com/shorts/`, `youtube.com/playlist?list=`, `music.youtube.com/`.
-- **FR1.3** Validate the URL before starting; reject non-YouTube links with a clear message.
-- **FR1.4** Fetch and display title, channel, duration, and thumbnail before download (metadata preview).
+- **FR1.1** Accept a URL pasted or typed, or received from the Android share sheet (`?url=` / `?text=`).
+- **FR1.2** Recognise `youtube.com/watch?v=`, `youtu.be/`, `youtube.com/shorts/`, `music.youtube.com/`, `m.youtube.com/`, `/embed/`, `/live/`. Reject everything else before yt-dlp runs.
+- **FR1.3** Show title, channel, duration, thumbnail, and available resolutions before download.
+- **FR1.4** A watch URL that also carries `list=` downloads that single video; whole-playlist support arrives in Phase 6.
 
-### 7.2 Mode: Audio
-- **FR2.1** Formats: `MP3` (default), `M4A`, `Opus`.
-- **FR2.2** MP3 bitrate options: 128 / 192 (default) / 320 kbps.
-- **FR2.3** M4A and Opus are passthrough (no re-encode) when the source stream matches, which is the highest fidelity option.
-- **FR2.4** Embed metadata (title, artist/uploader, album/playlist, year) and the video thumbnail as cover art.
-- **FR2.5** Crop the 16:9 thumbnail to a square before embedding (so it looks right in music players).
+### 7.2 Audio
+- **FR2.1** Formats: MP3 (default), M4A, Opus.
+- **FR2.2** MP3 bitrate: 128 / 192 (default) / 320 kbps. Show a note on 320 that the source is ~128 to 160 kbps.
+- **FR2.3** M4A and Opus are passthrough when the source matches (highest fidelity).
+- **FR2.4** Embed title, artist (uploader), and cover art. Crop the 16:9 thumbnail to a square first.
 
-### 7.3 Mode: Video
-- **FR3.1** Container: MP4 (H.264 + AAC) by default for maximum compatibility.
-- **FR3.2** Resolution options: 360p, 480p, 720p, 1080p, 1440p, 2160p, Best. Only show resolutions the video actually has.
-- **FR3.3** Merge video and audio streams automatically via FFmpeg.
-- **FR3.4** Optional: embed subtitles if available (Could).
+### 7.3 Video
+- **FR3.1** MP4 (H.264 + AAC) container. Merge streams with FFmpeg.
+- **FR3.2** Presets 360p to 2160p plus Best. Only show presets at or below the video's maximum.
 
-### 7.4 Output
-- **FR4.1** Default folders: `~/Music/YouTube` for audio, `~/Videos/YouTube` for video. User can change and the choice persists.
-- **FR4.2** Filename template default: `%(title)s [%(id)s].%(ext)s`. Sanitize characters that Windows forbids in filenames (backslash, slash, colon, asterisk, question mark, quotes, angle brackets, pipe).
-- **FR4.3** Never overwrite silently: skip if the file already exists, or add a numeric suffix.
-- **FR4.4** Open the output folder from the UI after completion.
+### 7.4 Jobs and delivery
+- **FR4.1** A download is a job: queued, fetching, downloading, processing, done, error, cancelled.
+- **FR4.2** Progress: percent, bytes, speed, ETA, current post-processing step.
+- **FR4.3** Cancel stops the job and deletes partial files.
+- **FR4.4** Finished files are uploaded to R2 and served by a signed link valid for 1 hour, then deleted (Phase 1). Until then, the API streams the file directly.
+- **FR4.5** Filenames are `Title [id].ext` with characters Windows forbids removed.
+- **FR4.6** Refuse live streams, premieres, and videos longer than 3 hours.
 
-### 7.5 Progress and feedback
-- **FR5.1** Live progress: percent, downloaded/total size, speed, ETA.
-- **FR5.2** Post-processing stage shown separately ("Converting to MP3...").
-- **FR5.3** Cancel button that stops the download and deletes partial files.
+### 7.5 Accounts (Phase 2)
+- **FR5.1** Sign up and sign in with email + password, and with Google.
+- **FR5.2** Verification email on sign up; downloads are blocked until `email_confirmed_at` is set.
+- **FR5.3** Password reset by email.
+- **FR5.4** Disposable email domains are refused at sign up. Domains without MX records are refused.
+- **FR5.5** CAPTCHA (Cloudflare Turnstile) on sign up.
+- **FR5.6** Per-user daily quota, default 20 downloads. Small anonymous allowance (3 per day per IP) so people can try it.
+- **FR5.7** Users can delete their account; their history and files are removed.
 
-### 7.6 Playlists
-- **FR6.1** Detect playlist URLs and ask: "Download whole playlist (N items) or only this video?"
-- **FR6.2** Sequential download with per-item and overall progress.
-- **FR6.3** Continue past failed items and report them at the end.
+### 7.6 History (Phase 2)
+- **FR6.1** Every job is stored in `downloads` with user id, video id, title, mode, format, quality, status, size, duration, error code, timestamps.
+- **FR6.2** History screen lists a user's own downloads, newest first, with re-download while the file exists.
 
-### 7.7 Error handling
-- **FR7.1** Map common yt-dlp errors to friendly messages: private video, removed video, age-restricted, geo-blocked, network failure, FFmpeg missing.
-- **FR7.2** Log full technical errors to `~/.downloader-manager/app.log` for debugging.
-- **FR7.3** If YouTube demands sign-in ("confirm you're not a bot"), offer the option to use cookies from the user's browser (`cookiesfrombrowser`).
+### 7.7 Activity analytics (Phase 5)
+- **FR7.1** The API records events: signup, email_verified, signin, info_requested, download_started, download_completed, download_failed (error code), quota_hit. IP is stored as a salted hash.
+- **FR7.2** Admin dashboard (role = admin): sign ups by day split verified / unverified / disposable; DAU and WAU; downloads by mode and format; success rate; top error codes; top email domains.
+- **FR7.3** PostHog for funnels and session replay, keyed by user id, with consent where required.
 
-### 7.8 Maintenance
-- **FR8.1** "Update engine" action runs `pip install -U yt-dlp` (or replaces the bundled binary) because YouTube changes break old versions within weeks.
-- **FR8.2** On startup, detect FFmpeg. If missing, show install instructions (`winget install Gyan.FFmpeg`) or offer to download a static build.
+### 7.8 Errors
+- **FR8.1** Map yt-dlp errors to friendly messages: private, unavailable, age-restricted, geo-blocked, bot check, live, network, FFmpeg missing.
+- **FR8.2** Full technical errors go to logs and Sentry, never to the UI.
+
+### 7.9 Operations
+- **FR9.1** `/health` reports FFmpeg and yt-dlp versions and whether auth is enabled.
+- **FR9.2** Nightly image rebuild keeps yt-dlp current.
+- **FR9.3** Uptime monitor pings `/health` every 5 minutes.
 
 ## 8. Non-functional requirements
 
 | Area | Requirement |
 |---|---|
-| Performance | Download speed limited only by network; UI stays responsive (downloads run in a worker thread). |
-| Reliability | Retry transient network errors up to 3 times. Resume partial downloads. |
-| Portability | Runs on Windows 11 first; no Windows-only APIs so macOS/Linux work too. |
-| Privacy | No telemetry. No data leaves the machine except requests to YouTube. |
-| Footprint | Installed size under 150 MB including FFmpeg. |
-| Configuration | Settings stored in `~/.downloader-manager/config.json`. |
+| Mobile-first | Designed at 360 px wide first. Sticky action bar, thumb-reachable controls, works as an installed PWA. |
+| Performance | Lighthouse mobile 90+ (Performance, Accessibility). Preview appears within 2 s of paste on a normal connection. |
+| Responsiveness | The API never blocks: downloads run on worker threads, the UI polls or streams progress. |
+| Reliability | Retry transient network errors 3 times. Jobs persist across restarts (Phase 1). Files expire after 1 hour. |
+| Security | No shell execution with user input. JWT verified per request. Row Level Security in Postgres. Rate limits. CORS locked to the app origin. Secrets only in env vars. |
+| Privacy | Hash IPs. Store video ids, not full URLs. 90-day retention on raw events. Delete on account deletion. |
+| Cost | $0/month at launch. Known steps: Render Starter $7, Supabase Pro $25, Hetzner VPS ~€4. |
+| Portability | Backend is one Docker image that runs on Render, Fly, Railway, Oracle, or any VPS. |
 
 ## 9. Tech stack
 
 | Layer | Choice | Reason |
 |---|---|---|
-| Runtime | Python 3.11+ | Requested; best library support for this problem. |
-| Download engine | `yt-dlp` | De facto standard, actively maintained, Python API with progress hooks. |
-| Media processing | FFmpeg (static build) | Required for MP3 conversion and stream merging. |
-| CLI | `typer` + `rich` | Type-safe commands, beautiful progress bars for free. |
-| GUI | `customtkinter` | Modern look, pure Python, small, no Qt licensing questions. |
-| Config | `pydantic-settings` or plain `json` | Simple typed settings file. |
-| Packaging | PyInstaller (`--onefile`) | Single .exe, no Python install required for end users. |
-| Tests | `pytest` | Unit tests for URL parsing, format selection, filename sanitizing. |
+| Backend runtime | Python 3.11+ (3.14 locally), FastAPI, uvicorn | Async API, automatic docs, pairs naturally with yt-dlp. |
+| Download engine | `yt-dlp` via its Python API | Maintained, progress hooks, no shell. |
+| Media | FFmpeg (apt in Docker; winget locally) | Required for MP3 and merging. |
+| Package manager | `uv` | Fast, lockfile, same in Docker and CI. |
+| Frontend | Next.js 16, React 19, TypeScript, Tailwind 4 | Mobile-first PWA, free on Vercel, share target support. |
+| Auth + DB | Supabase (Postgres, Auth, RLS) | Sign up, verification, reset, Google login without writing any of it. |
+| DB access | SQLAlchemy 2 | SQLite locally, Postgres in production, same code. |
+| File delivery | Cloudflare R2 | Zero egress fees. |
+| Analytics | PostHog, own `events` table, Sentry | Funnels and replay; source of truth; errors. |
+| CI | GitHub Actions | Lint, tests, build on every PR. |
+| Deploy | Vercel + Render (Docker), later a VM for the worker | Free, automatic from `main`. |
 
-Alternatives considered: **PySide6/Qt** (heavier, more polished; use if the GUI grows), **Flet** (Flutter UI, modern but bigger binary), **local web UI with FastAPI** (good for cross-platform, but a browser tab feels less like a tool).
+Alternatives considered: **Neon** (Postgres only, no auth), **Firebase** (NoSQL, admin-only Python SDK), **MongoDB Atlas** (no auth, NoSQL), **HTMX + Jinja** instead of Next.js (one language, but weaker mobile app feel and no share target ergonomics), **Fly.io / Railway** (no longer free for new accounts).
 
 ## 10. Architecture
 
 ```
 downloader-manager/
-├── docs/PRD.md
-├── pyproject.toml
-├── src/downloader_manager/
-│   ├── __init__.py
-│   ├── core/
-│   │   ├── url.py          # parse/validate YouTube URLs, detect playlist vs video
-│   │   ├── formats.py      # build yt-dlp format selectors + postprocessors
-│   │   ├── downloader.py   # thin wrapper around yt_dlp.YoutubeDL, progress hooks, cancel
-│   │   ├── ffmpeg.py       # locate/verify FFmpeg, install guidance
-│   │   └── errors.py       # map yt-dlp exceptions to user-facing messages
-│   ├── config.py           # load/save settings (output dirs, defaults)
-│   ├── cli.py              # typer app: `ytdm audio <url>`, `ytdm video <url> --res 1080`
-│   └── gui/
-│       ├── app.py          # customtkinter main window
-│       └── widgets.py      # URL entry, mode toggle, quality dropdown, progress bar
-└── tests/
-    ├── test_url.py
-    ├── test_formats.py
-    └── test_filenames.py
+├── docs/                      PRD.md, ROADMAP.md
+├── supabase/migrations/       0001_init.sql  (profiles, downloads, events, RLS)
+├── backend/                   FastAPI + yt-dlp + FFmpeg  (Docker on Render / VM)
+│   ├── app/
+│   │   ├── core/              url.py, formats.py, downloader.py, errors.py, ffmpeg.py
+│   │   ├── api/               info.py, jobs.py
+│   │   ├── jobs/store.py      job queue (in-memory now, Postgres in Phase 1)
+│   │   ├── auth.py            Supabase JWT verification (JWKS or HS256)
+│   │   ├── config.py          settings from DM_* env vars
+│   │   ├── deps.py            rate limiter, DI
+│   │   ├── schemas.py         request/response models
+│   │   └── main.py            app factory, /health
+│   ├── tests/                 url, formats, api
+│   ├── Dockerfile             python:3.12-slim + ffmpeg + uv
+│   └── .env.example
+├── frontend/                  Next.js 16  (Vercel)
+│   ├── src/app/               layout.tsx, page.tsx, manifest.ts (share_target), globals.css
+│   ├── src/components/        downloader.tsx (paste, preview, mode, quality, progress)
+│   └── src/lib/               api.ts (typed client, token provider), format.ts
+└── .github/workflows/ci.yml   backend tests + frontend build
 ```
 
-Rule: **`core/` has no UI code.** Both the CLI and the GUI call the same `Downloader` class, so behaviour is identical and testable.
+Request flow: phone → Vercel (Next.js) → `api.` (FastAPI) → worker thread runs yt-dlp + FFmpeg → file to R2 → signed link back to the phone → R2 serves the bytes → lifecycle deletes after 1 hour. Auth: the browser talks to Supabase for sign up / sign in and sends the access token to the API, which verifies it against Supabase's public keys.
+
+Rule: **`core/` has no HTTP or UI code.** The API, a future CLI, and tests all call the same `Downloader` class.
 
 ### Key yt-dlp settings (the heart of the product)
 
 | Goal | Format selector | Post-processor |
 |---|---|---|
 | MP3 192 kbps | `bestaudio/best` | `FFmpegExtractAudio` codec=mp3, quality=192 |
-| M4A passthrough | `bestaudio[ext=m4a]/bestaudio` | `FFmpegExtractAudio` codec=m4a (copies if already AAC) |
-| Opus passthrough | `bestaudio[acodec=opus]/bestaudio` | none |
-| MP4 1080p | `bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080]` | `merge_output_format="mp4"` |
+| M4A passthrough | `bestaudio[ext=m4a]/bestaudio/best` | `FFmpegExtractAudio` codec=m4a, quality=0 (copies if already AAC) |
+| Opus passthrough | `bestaudio[acodec=opus]/bestaudio/best` | `FFmpegExtractAudio` codec=opus, quality=0 |
+| MP4 1080p | `bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best` | `merge_output_format="mp4"` |
 | MP4 best | `bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best` | `merge_output_format="mp4"` |
-| Cover art + tags | any audio | `EmbedThumbnail` + `FFmpegMetadata`, with `writethumbnail=True` |
+| Cover art + tags | any audio | `FFmpegMetadata`, `FFmpegThumbnailsConvertor` (jpg, square crop), `EmbedThumbnail` |
 
-Note on audio quality: YouTube's source audio is roughly 128 kbps AAC or 130-160 kbps Opus. A 320 kbps MP3 does **not** sound better than the source; it just makes a bigger file. Default to 192 kbps MP3, and recommend M4A/Opus to users who want the best fidelity.
+Note on audio quality: YouTube's source audio is roughly 128 kbps AAC or 130 to 160 kbps Opus. A 320 kbps MP3 does **not** sound better than the source; it only makes a bigger file. Default to 192 kbps MP3 and recommend M4A or Opus for best fidelity.
 
 ## 11. Milestones
 
-| # | Milestone | Deliverable | Effort |
-|---|---|---|---|
-| M0 | Environment | `pip install yt-dlp typer rich customtkinter`, install FFmpeg, verify one manual download. | 1 hour |
-| M1 | Core + CLI (MVP) | `ytdm audio <url>` and `ytdm video <url> --res 1080` work with progress bar, metadata, cover art. Tests for URL and format logic. | 1-2 days |
-| M2 | GUI | CustomTkinter window: paste box, Audio/Video toggle, quality dropdown, folder picker, progress bar, cancel. | 2-3 days |
-| M3 | Playlists + queue | Playlist detection and prompt, sequential queue, per-item status. | 1-2 days |
-| M4 | Polish + packaging | Friendly errors, FFmpeg detection, "update engine" button, PyInstaller .exe. | 1-2 days |
+See [ROADMAP.md](ROADMAP.md) for the full phase plan. Summary:
 
-Ship M1 first. It is useful on its own and proves the whole pipeline.
+| Phase | Outcome | Duration |
+|---|---|---|
+| 0 | Foundations: engine, API, mobile UI, Docker, CI, migration. Verified end to end. | done |
+| 1 | Solid single-user product: R2 delivery, persistent jobs, cancel, UX states. | 1 week |
+| 2 | Accounts: Supabase Auth, verification, disposable-email checks, history, quotas. | 1 week |
+| 3 | Mobile-first UI/UX pass: navigation, install prompt, accessibility, Lighthouse 90+. | 1 week |
+| 4 | Deployment and operations: Vercel, Render, R2, DNS, CI/CD, uptime, backups, nightly rebuild. | 3 to 4 days |
+| 5 | Analytics: events, PostHog, admin dashboard, email authenticity reporting. | 4 to 5 days |
+| 6 | Hardening and growth: quotas, bot-check strategy, playlists, legal pages. | ongoing |
+| 7 | Optional native mobile wrapper. | later |
 
 ## 12. Risks and legal
 
 | Risk | Impact | Mitigation |
 |---|---|---|
-| YouTube changes break `yt-dlp` | Downloads fail until updated | "Update engine" button; pin nothing, always allow upgrade. |
-| YouTube bot-check / sign-in wall | Downloads fail on some networks | Support `cookiesfrombrowser`; document it. |
-| FFmpeg not installed | MP3 and high-res video impossible | Detect at startup; give one-line install command; optionally bundle a static build. |
-| Terms of Service | YouTube's ToS forbids downloading content without permission except via YouTube's own download features. Downloading copyrighted music you do not own may also infringe copyright in your jurisdiction. | Tool is for personal use with content you have rights to (your own uploads, Creative Commons, public domain, or where the owner permits). Show a one-time disclaimer. Do not distribute the app commercially. |
-| FFmpeg licensing when bundling | GPL/LGPL obligations | Bundle an LGPL build and include its license text, or have the user install it. |
-
-Building and using this tool for yourself is the same thing thousands of yt-dlp users do daily. The legal exposure comes from what you download and whether you redistribute it, not from writing the software.
+| YouTube blocks datacenter IPs | Downloads fail with a bot-check error | Friendly error now; worker on a clean-IP VM, throwaway-account cookies, or residential proxy later. |
+| YouTube changes break `yt-dlp` | Downloads fail until updated | Nightly rebuild; `/health` shows the version; Sentry alert on failure spikes. |
+| Bandwidth cost | Free tiers exhausted | R2 for delivery (no egress fees), size caps, 1-hour TTL, per-user quotas. |
+| Hosting provider objects | Service taken down | Personal use, quotas, no marketing; Docker image moves to a VPS in an hour. |
+| Terms of Service and copyright | YouTube's ToS forbids downloading without permission except via YouTube's own features. Copyrighted music you do not own may infringe in your jurisdiction. As the **operator** of a hosted service, this exposure is now yours, not only the end user's. | Personal use with content you have rights to. Disclaimer at sign up. No monetisation. DMCA contact page. Small, private user base. |
+| Supabase free project pauses after 7 idle days | Sign in fails | Uptime ping every 5 minutes. |
+| Fake or throwaway sign ups | Polluted analytics, quota abuse | Verification required, disposable-domain and MX checks, Turnstile, per-user quotas. |
 
 ## 13. Success criteria
 
-- A pasted music video becomes a tagged MP3 with cover art in under 30 seconds on a normal connection.
-- A 1080p video downloads and plays in VLC and Windows Media Player with no manual steps.
-- Zero crashes on the top 5 error cases (bad URL, private, removed, offline, no FFmpeg): each shows a friendly message.
-- The GUI never freezes during a download.
+- On a phone, paste to saved MP3 with cover art in under 30 seconds for a typical song.
+- A 1080p MP4 downloads and plays on the phone and in VLC with no manual steps.
+- Every one of the top error cases (bad link, private, removed, bot check, network, FFmpeg) shows a friendly message; zero unhandled exceptions in Sentry for those.
+- A new user can sign up, verify, download, and see history on a second device.
+- A disposable or MX-less email is refused with a clear message.
+- The admin dashboard answers "how many real users this week and what did they download" on one page.
+- Monthly cost at launch: $0 plus the domain.
 
-## 14. Open questions
+## 14. Open questions (defaults chosen)
 
-1. GUI now, or CLI only until it proves useful? (Recommendation: CLI first, GUI in week 2.)
-2. Bundle FFmpeg inside the .exe (bigger download, zero setup) or ask the user to install it (smaller, one extra step)?
-3. Default audio format: MP3 for compatibility, or M4A for fidelity?
-4. Should the queue persist across restarts?
+1. Require sign in for every download, or allow a small anonymous allowance? Default: 3 per day per IP anonymous, then sign in.
+2. Google login in Phase 2 or later? Default: Phase 2, it is one toggle in Supabase.
+3. Deliver files through the API or through R2? Default: R2 from Phase 1.
+4. Whole-playlist downloads: Phase 6 or earlier? Default: Phase 6, after quotas exist.
+5. Where does the worker live long term? Default: Oracle Always Free ARM VM; Hetzner if Oracle sign-up fails.
 
-## 15. Setup commands (M0)
+## 15. Local setup
 
 ```powershell
-# in d:\workspace\projects\downloader-manager
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install yt-dlp typer rich customtkinter pytest
-winget install Gyan.FFmpeg      # then reopen the terminal so ffmpeg is on PATH
+# Backend (FFmpeg is already installed via winget on this machine)
+cd backend
+uv sync
+uv run pytest -q
+uv run uvicorn app.main:app --reload        # http://localhost:8000/docs
 
-# smoke test: best audio as MP3 with cover art
-yt-dlp -x --audio-format mp3 --audio-quality 192K --embed-thumbnail --embed-metadata "<youtube url>"
+# Frontend (in a second terminal)
+cd frontend
+npm install
+npm run dev                                 # http://localhost:3000
 ```
+
+`backend/.env.example` and `frontend/.env.local.example` list every setting. Nothing is required for local development.

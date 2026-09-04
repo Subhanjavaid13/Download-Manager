@@ -35,7 +35,9 @@ def test_watch_url_keeps_playlist_id() -> None:
 
 
 def test_playlist_url() -> None:
-    parsed = parse_youtube_url("https://www.youtube.com/playlist?list=PLrAXtmErZgOeiKm4sgNOknGvNjby9efdf")
+    parsed = parse_youtube_url(
+        "https://www.youtube.com/playlist?list=PLrAXtmErZgOeiKm4sgNOknGvNjby9efdf"
+    )
     assert parsed.kind == "playlist"
     assert parsed.video_id is None
     assert parsed.canonical.endswith("list=PLrAXtmErZgOeiKm4sgNOknGvNjby9efdf")
