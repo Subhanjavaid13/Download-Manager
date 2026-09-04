@@ -1,68 +1,50 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import type { ReactNode } from "react";
 
-import { useAuth } from "@/lib/auth";
-
-export function AppHeader({ right }: { right?: React.ReactNode }) {
-  const { available, ready, user, me } = useAuth();
-  const pathname = usePathname();
-  const initial = (me?.display_name ?? user?.email ?? "?").trim().charAt(0).toUpperCase();
-
+/** The app mark, same drawing as the installed icon. */
+function Mark() {
   return (
-    <header className="mb-6 flex items-center justify-between gap-3">
-      <Link href="/" className="font-display text-2xl font-bold tracking-tight text-ink">
-        Downloader Manager
-      </Link>
-      <div className="flex items-center gap-3">
-        {right}
-        {available && ready && (
-          user ? (
-            <Link
-              href="/account"
-              aria-label="Account"
-              className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-semibold ${
-                me && !me.email_verified ? "bg-amber-soft text-amber" : "bg-accent-soft text-accent"
-              } ${pathname === "/account" ? "ring-2 ring-accent/40" : ""}`}
-            >
-              {initial}
-            </Link>
-          ) : (
-            <Link
-              href="/signin"
-              className="rounded-lg border border-line px-3 py-1.5 text-sm font-medium text-ink-2 hover:bg-surface"
-            >
-              Sign in
-            </Link>
-          )
-        )}
-      </div>
-    </header>
+    <span
+      aria-hidden
+      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[0.55rem] bg-accent text-on-accent"
+    >
+      <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5">
+        <path
+          d="M12 4.5v9.5M8 11l4 4 4-4"
+          stroke="currentColor"
+          strokeWidth="2.2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+        <path d="M7 18.5h10" stroke="var(--amber)" strokeWidth="2.2" strokeLinecap="round" />
+      </svg>
+    </span>
   );
 }
 
-export function SubNav() {
-  const pathname = usePathname();
-  const { user } = useAuth();
-  const items = [
-    { href: "/", label: "Download" },
-    { href: "/history", label: "History" },
-    ...(user ? [{ href: "/account", label: "Account" }] : []),
-  ];
+/**
+ * The bar at the top of every screen: the app mark and name, plus an optional
+ * status slot. Navigation lives in the bottom bar, within thumb reach.
+ *
+ * `asHeading` makes the app name the page's <h1>; screens with their own
+ * title leave it off and render their own heading instead.
+ */
+export function AppHeader({ right, asHeading }: { right?: ReactNode; asHeading?: boolean }) {
+  const name = (
+    <Link href="/" className="flex items-center gap-2.5 rounded-control">
+      <Mark />
+      <span className="font-display text-lg font-bold tracking-tight text-ink">
+        Downloader Manager
+      </span>
+    </Link>
+  );
+
   return (
-    <nav className="mb-5 flex gap-1 rounded-lg border border-line bg-surface p-1 text-sm">
-      {items.map((it) => (
-        <Link
-          key={it.href}
-          href={it.href}
-          className={`flex-1 rounded-md px-3 py-1.5 text-center font-medium ${
-            pathname === it.href ? "bg-accent-soft text-accent" : "text-ink-2 hover:bg-bg"
-          }`}
-        >
-          {it.label}
-        </Link>
-      ))}
-    </nav>
+    <header className="mb-5 flex items-center justify-between gap-3">
+      {asHeading ? <h1 className="min-w-0">{name}</h1> : name}
+      {right}
+    </header>
   );
 }

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 
+import { BottomDock } from "@/components/bottom-nav";
 import { AppHeader } from "@/components/header";
 import { NotConfigured } from "@/components/not-configured";
 import { Button, Card, Divider, Field, Notice, Page } from "@/components/ui";
@@ -51,57 +52,68 @@ export default function SignInPage() {
       provider: "google",
       options: { redirectTo: `${window.location.origin}/auth/callback` },
     });
-    if (err) setError(err.message.includes("not enabled") ? "Google sign-in is not enabled yet." : err.message);
+    if (err)
+      setError(
+        err.message.includes("not enabled") ? "Google sign-in is not enabled yet." : err.message,
+      );
   };
 
   return (
-    <Page>
-      <AppHeader />
-      {!available ? (
-        <NotConfigured />
-      ) : (
-        <Card>
-          <h1 className="font-display text-xl font-semibold">Sign in</h1>
-          <p className="mt-1 text-sm text-muted">Your history follows you to every device.</p>
-          <form onSubmit={submit} className="mt-5 space-y-4">
-            <Field
-              label="Email"
-              name="email"
-              type="email"
-              autoComplete="email"
-              inputMode="email"
-              required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-            />
-            <Field
-              label="Password"
-              name="password"
-              type="password"
-              autoComplete="current-password"
-              required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
-            {error && <Notice tone="error">{error}</Notice>}
-            <Button type="submit" busy={busy} className="w-full">
-              Sign in
+    <>
+      <Page>
+        <AppHeader />
+        {!available ? (
+          <NotConfigured />
+        ) : (
+          <Card>
+            <h1 className="font-display text-display">Sign in</h1>
+            <p className="mt-1 text-sm text-muted">Your history follows you to every device.</p>
+            <form onSubmit={submit} className="mt-5 space-y-4">
+              <Field
+                label="Email"
+                name="email"
+                type="email"
+                autoComplete="email"
+                inputMode="email"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+              <Field
+                label="Password"
+                name="password"
+                type="password"
+                autoComplete="current-password"
+                required
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+              {error && <Notice tone="error">{error}</Notice>}
+              <Button type="submit" busy={busy} busyLabel="Signing in…" className="w-full">
+                Sign in
+              </Button>
+            </form>
+            <div className="mt-3 flex justify-between text-sm">
+              <Link href="/forgot" className="text-ink-2 hover:underline">
+                Forgot password?
+              </Link>
+              <Link href="/signup" className="font-medium text-accent hover:underline">
+                Create an account
+              </Link>
+            </div>
+            <Divider label="or" />
+            <Button type="button" tone="secondary" className="w-full" onClick={google}>
+              Continue with Google
             </Button>
-          </form>
-          <div className="mt-3 flex justify-between text-sm">
-            <Link href="/forgot" className="text-ink-2 hover:underline">
-              Forgot password?
-            </Link>
-            <Link href="/signup" className="font-medium text-accent hover:underline">
-              Create an account
-            </Link>
-          </div>
-          <Divider label="or" />
-          <Button type="button" tone="secondary" className="w-full" onClick={google}>
-            Continue with Google
-          </Button>
-        </Card>
-      )}
-    </Page>
+            <p className="mt-4 text-center text-sm text-muted">
+              <Link href="/" className="hover:underline">
+                Keep downloading as a guest
+              </Link>
+            </p>
+          </Card>
+        )}
+      </Page>
+      <BottomDock />
+    </>
   );
 }

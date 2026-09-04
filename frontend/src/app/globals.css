@@ -1,23 +1,64 @@
 @import "tailwindcss";
 
-/* Design tokens. Light palette on :root, dark palette via prefers-color-scheme.
-   Blue is the video hue, amber is the audio hue; both double as the accent. */
+/* ==========================================================================
+   Design tokens
+
+   Light is the base: every value is declared on :root. The dark block only
+   overrides values that already exist above it, so no colour is ever
+   dark-only. Blue is the video hue, amber is the audio hue.
+
+   Contrast: every text/background pair below was checked against WCAG AA
+   (4.5:1 for body text, 3:1 for large text and UI edges) in both themes.
+   ========================================================================== */
 :root {
+  /* --- Surfaces and text --- */
   --bg: #f4f5f7;
   --surface: #ffffff;
+  --surface-2: #eef0f4; /* inset wells, skeletons, pressed states */
   --ink: #14181f;
   --ink-2: #3d4450;
-  --muted: #667080;
-  --line: #d9dce2;
-  --line-soft: #e8eaee;
+  --muted: #5c6675; /* 5.2:1 on --bg */
+  --line: #d3d7de;
+  --line-soft: #e6e9ee;
+
+  /* --- Accents. `--on-*` is the text colour that sits on the solid fill. --- */
   --accent: #2857c7;
   --accent-soft: #e3eafa;
-  --amber: #b86a0c;
+  --on-accent: #ffffff;
+  --amber: #9a5b0a;
   --amber-soft: #fbeedc;
-  --ok: #1f8a5b;
+  --on-amber: #ffffff;
+  --ok: #15794c;
   --ok-soft: #e1f3ea;
-  --danger: #c23b3b;
+  --on-ok: #ffffff;
+  --danger: #b32c2c;
   --danger-soft: #fae4e4;
+  --on-danger: #ffffff;
+
+  /* --- Chrome --- */
+  --ring: #2857c7;
+  --dock: rgb(255 255 255 / 0.9); /* bottom bars, over blurred content */
+  --overlay: rgb(20 24 31 / 0.45);
+  --shadow-card: 0 1px 2px rgb(20 24 31 / 0.05);
+  --shadow-dock: 0 -1px 0 rgb(20 24 31 / 0.06);
+  --shadow-pop: 0 8px 24px -8px rgb(20 24 31 / 0.22);
+
+  /* --- Spacing rhythm (on top of Tailwind's 4px scale) --- */
+  --space-gutter: 1rem; /* page side padding */
+  --space-card: 1rem; /* card padding */
+  --space-section: 1.5rem; /* gap between sections */
+
+  /* --- Layout: the docked bottom bars --- */
+  --nav-h: 3.5rem; /* bottom navigation */
+  --action-h: 4rem; /* home page action bar */
+  --safe-b: env(safe-area-inset-bottom, 0px);
+
+  /* --- Motion --- */
+  --dur-fast: 120ms;
+  --dur: 200ms;
+  --dur-slow: 340ms;
+  --ease-soft: cubic-bezier(0.22, 0.8, 0.24, 1);
+
   color-scheme: light;
 }
 
@@ -25,26 +66,42 @@
   :root {
     --bg: #12151a;
     --surface: #1a1e25;
+    --surface-2: #232831;
     --ink: #e8eaee;
     --ink-2: #c3c8d1;
-    --muted: #8f98a5;
-    --line: #2c323b;
-    --line-soft: #232830;
+    --muted: #98a1ae; /* 7.0:1 on --bg */
+    --line: #2f3540;
+    --line-soft: #252a33;
+
     --accent: #7a9df2;
     --accent-soft: #1f2a45;
+    --on-accent: #0c1424;
     --amber: #e6a04a;
     --amber-soft: #3a2a14;
+    --on-amber: #1c1204;
     --ok: #4fc58a;
     --ok-soft: #15301f;
+    --on-ok: #04180d;
     --danger: #ef6b6b;
     --danger-soft: #3b1a1a;
+    --on-danger: #200606;
+
+    --ring: #7a9df2;
+    --dock: rgb(26 30 37 / 0.9);
+    --overlay: rgb(0 0 0 / 0.6);
+    --shadow-card: 0 1px 2px rgb(0 0 0 / 0.3);
+    --shadow-dock: 0 -1px 0 rgb(255 255 255 / 0.06);
+    --shadow-pop: 0 8px 24px -8px rgb(0 0 0 / 0.6);
+
     color-scheme: dark;
   }
 }
 
 @theme inline {
+  /* Colour */
   --color-bg: var(--bg);
   --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
   --color-ink: var(--ink);
   --color-ink-2: var(--ink-2);
   --color-muted: var(--muted);
@@ -52,19 +109,67 @@
   --color-line-soft: var(--line-soft);
   --color-accent: var(--accent);
   --color-accent-soft: var(--accent-soft);
+  --color-on-accent: var(--on-accent);
   --color-amber: var(--amber);
   --color-amber-soft: var(--amber-soft);
+  --color-on-amber: var(--on-amber);
   --color-ok: var(--ok);
   --color-ok-soft: var(--ok-soft);
+  --color-on-ok: var(--on-ok);
   --color-danger: var(--danger);
   --color-danger-soft: var(--danger-soft);
+  --color-on-danger: var(--on-danger);
+  --color-ring: var(--ring);
+  --color-dock: var(--dock);
+
+  /* Spacing */
+  --spacing-gutter: var(--space-gutter);
+  --spacing-card: var(--space-card);
+  --spacing-section: var(--space-section);
+
+  /* Type scale */
+  --text-display: 1.625rem;
+  --text-display--line-height: 1.15;
+  --text-display--letter-spacing: -0.02em;
+  --text-display--font-weight: 700;
+  --text-title: 1.0625rem;
+  --text-title--line-height: 1.35;
+  --text-title--letter-spacing: -0.01em;
+  --text-title--font-weight: 600;
+  --text-label: 0.6875rem;
+  --text-label--line-height: 1.2;
+  --text-label--letter-spacing: 0.08em;
+  --text-label--font-weight: 500;
+  --text-data: 0.75rem;
+  --text-data--line-height: 1.25;
+
+  /* Radii */
+  --radius-card: 0.875rem;
+  --radius-control: 0.625rem;
+
+  /* Shadows */
+  --shadow-card: var(--shadow-card);
+  --shadow-dock: var(--shadow-dock);
+  --shadow-pop: var(--shadow-pop);
+
+  /* Motion */
+  --ease-soft: var(--ease-soft);
+  --animate-shimmer: shimmer 1.6s linear infinite;
+  --animate-slide: slide 1.4s var(--ease-soft) infinite;
+  --animate-rise: rise var(--dur-slow) var(--ease-soft) both;
+
+  /* Fonts */
   --font-sans: var(--font-plex), ui-sans-serif, system-ui, "Segoe UI", sans-serif;
   --font-display: var(--font-bricolage), var(--font-plex), ui-sans-serif, sans-serif;
   --font-mono: var(--font-plex-mono), ui-monospace, Consolas, monospace;
 }
 
+/* ==========================================================================
+   Base
+   ========================================================================== */
 html {
   height: 100%;
+  -webkit-tap-highlight-color: transparent;
 }
 
 body {
@@ -73,13 +178,126 @@ body {
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+  /* No horizontal scroll on a 320px phone, whatever the content. */
+  overflow-wrap: break-word;
 }
 
+/* One focus ring for the whole app, on every focusable thing, in both themes.
+   :where() keeps specificity at 0 so a component can still opt out. */
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+/* Keyboard users land here first and can jump past the header. */
+@utility skip-link {
+  position: fixed;
+  top: 0.5rem;
+  left: 0.5rem;
+  z-index: 60;
+  transform: translateY(-150%);
+  border-radius: var(--radius-control);
+  background: var(--accent);
+  color: var(--on-accent);
+  padding: 0.5rem 0.875rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  transition: transform var(--dur) var(--ease-soft);
+
+  &:focus {
+    transform: translateY(0);
+  }
+}
+
+/* Standard transition for interactive chrome. */
+@utility transition-ui {
+  transition-property: color, background-color, border-color, box-shadow, opacity, transform;
+  transition-duration: var(--dur);
+  transition-timing-function: var(--ease-soft);
+}
+
+/* Every tappable control clears the 44px thumb target. */
+@utility tap {
+  min-height: 2.75rem;
+}
+
+/* Room under the page content for the docked bars. */
+@utility pb-dock {
+  padding-bottom: calc(var(--nav-h) + var(--safe-b) + 2rem);
+}
+
+@utility pb-dock-action {
+  padding-bottom: calc(var(--nav-h) + var(--action-h) + var(--safe-b) + 2rem);
+}
+
+@utility pb-safe {
+  padding-bottom: var(--safe-b);
+}
+
+/* ==========================================================================
+   Keyframes
+   ========================================================================== */
+@keyframes shimmer {
+  0% {
+    background-position: -120% 0;
+  }
+  100% {
+    background-position: 220% 0;
+  }
+}
+
+@keyframes slide {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Loading placeholders: a soft sweep over the inset surface colour. */
+.skeleton {
+  background-color: var(--surface-2);
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    color-mix(in srgb, var(--line-soft) 70%, transparent) 50%,
+    transparent 100%
+  );
+  background-size: 220% 100%;
+  background-repeat: no-repeat;
+  animation: var(--animate-shimmer);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  html {
+    scroll-behavior: smooth;
+  }
+}
+
+/* Reduced motion: nothing moves, but state still changes instantly. */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
   *::after {
     animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .skeleton {
+    background-image: none;
   }
 }

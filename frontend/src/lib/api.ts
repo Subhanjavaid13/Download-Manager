@@ -28,6 +28,8 @@ export type Health = {
   signup_enabled: boolean;
   storage: "local" | "r2";
   database: "sqlite" | "postgresql" | "other";
+  /** Result of a live query, not a value cached at startup. */
+  database_ok: boolean;
 };
 
 export type Info = {
@@ -135,7 +137,17 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const clientId = getClientId();
   if (clientId) headers.set("X-Client-Id", clientId);
 
-  const res = await fetch(`${API_URL}${path}`, { ...init, headers });
+  // A dead server, DNS failure, or blocked CORS preflight rejects with a bare
+  // TypeError. Turn it into an ApiError here so every caller gets one shape and
+  // one sentence, instead of each screen inventing its own wording.
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}${path}`, { ...init, headers });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") throw err; // caller cancelled
+    throw new ApiError(0, "The server did not answer. Check your connection and try again.");
+  }
+
   if (!res.ok) {
     let message = res.statusText || "Request failed";
     try {

@@ -4,8 +4,9 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import { BottomDock } from "@/components/bottom-nav";
 import { AppHeader } from "@/components/header";
-import { Card, Notice, Page } from "@/components/ui";
+import { Card, Notice, Page, Skeleton } from "@/components/ui";
 import { useAuth } from "@/lib/auth";
 import { getSupabase } from "@/lib/supabase";
 
@@ -55,23 +56,36 @@ export default function AuthCallbackPage() {
   }, [ready, user, error]);
 
   return (
-    <Page>
-      <AppHeader />
-      <Card>
-        {error ? (
-          <>
-            <Notice tone="error">{error}</Notice>
-            <Link href="/signin" className="mt-4 inline-block text-sm font-medium text-accent hover:underline">
-              Go to sign in
-            </Link>
-          </>
-        ) : (
-          <>
-            <h1 className="font-display text-xl font-semibold">Signing you in…</h1>
-            <p className="mt-2 text-sm text-muted">One moment.</p>
-          </>
-        )}
-      </Card>
-    </Page>
+    <>
+      <Page>
+        <AppHeader />
+        <Card>
+          {error ? (
+            <>
+              <h1 className="mb-3 font-display text-display">That link did not work</h1>
+              <Notice tone="error">{error}</Notice>
+              <Link
+                href="/signin"
+                className="mt-4 inline-block text-sm font-semibold text-accent hover:underline"
+              >
+                Go to sign in
+              </Link>
+            </>
+          ) : (
+            <>
+              <h1 className="font-display text-display">Signing you in…</h1>
+              <p className="mt-2 text-sm text-muted" role="status">
+                One moment. This page moves on by itself.
+              </p>
+              <div aria-hidden className="mt-4 space-y-2">
+                <Skeleton className="h-3.5 w-2/3" />
+                <Skeleton className="h-3.5 w-1/3" />
+              </div>
+            </>
+          )}
+        </Card>
+      </Page>
+      <BottomDock />
+    </>
   );
 }
