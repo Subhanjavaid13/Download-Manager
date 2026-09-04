@@ -7,7 +7,7 @@ The same models and queries run on both.
 from collections.abc import Iterator
 from contextlib import contextmanager
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, inspect
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
@@ -64,10 +64,22 @@ def make_session_factory(engine: Engine) -> sessionmaker[Session]:
 
 
 def init_db(engine: Engine) -> None:
-    """Create tables that do not exist yet. Production uses supabase/migrations instead."""
+    """SQLite: create tables on the fly. Postgres: require the real migration to have run.
+
+    Creating tables from the ORM on Postgres would skip the foreign keys, Row Level
+    Security, and triggers defined in supabase/migrations, so we refuse and explain.
+    """
     from app import models  # noqa: F401  (registers the models on Base)
 
-    Base.metadata.create_all(engine)
+    if engine.dialect.name == "sqlite":
+        Base.metadata.create_all(engine)
+        return
+    if not inspect(engine).has_table("downloads"):
+        raise RuntimeError(
+            "The database has no 'downloads' table. Apply the schema first with "
+            "`uv run python scripts/migrate.py` (uses DM_DATABASE_URL; "
+            "add --dry-run to validate without changing anything)."
+        )
 
 
 @contextmanager

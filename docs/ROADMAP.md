@@ -107,7 +107,7 @@ Exit criteria for you to run: 20 consecutive downloads (10 audio, 10 video) on a
 
 Goal: sign up, sign in, verified email, personal history.
 
-- Supabase project. Run `supabase/migrations/0001_init.sql` (profiles, downloads, events, RLS).
+- Supabase project (created 2026-09-04, pooler connection verified from the app). Apply the schema with `uv run python scripts/migrate.py`; the dry run already passes against the project.
 - Frontend: `@supabase/ssr` client, pages for sign up, sign in, verify-email notice, forgot password, account. Google OAuth as a one-click option.
 - API: set `DM_SUPABASE_URL`, turn on `DM_REQUIRE_AUTH`, key rate limits by user id instead of IP.
 - Sign-up hardening: Turnstile, disposable-domain check, MX check. Unverified users see a banner and cannot start downloads.

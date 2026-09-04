@@ -57,6 +57,19 @@ Files are deleted one hour after a job finishes. The history row stays.
 
 All backend settings are `DM_*` environment variables, documented in [backend/.env.example](backend/.env.example). Two matter most: `DM_DATABASE_URL` (SQLite by default, a Supabase Postgres URI in production) and `DM_STORAGE` (`local` by default, `r2` for Cloudflare R2 in production). The frontend needs only `NEXT_PUBLIC_API_URL` (see [frontend/.env.local.example](frontend/.env.local.example)).
 
+## Database
+
+SQLite is used automatically in development. To use Supabase Postgres, put the pooler URL in `backend/.env` and apply the schema once:
+
+```powershell
+cd backend
+uv run python scripts/migrate.py --dry-run   # validates the SQL inside a transaction, then rolls back
+uv run python scripts/migrate.py             # applies pending files from supabase/migrations
+uv run python scripts/migrate.py --status    # what is applied
+```
+
+The API refuses to start against a Postgres database that has no schema, so you cannot end up with tables that miss Row Level Security.
+
 ## Deploy
 
 See [docs/ROADMAP.md](docs/ROADMAP.md), Phase 4. Short version: Vercel for `frontend/`, Render for `backend/Dockerfile`, Supabase for auth and data, Cloudflare R2 for file delivery. All free tiers.
