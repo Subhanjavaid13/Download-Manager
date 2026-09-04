@@ -1,0 +1,41 @@
+# Backend-local ignores (root .gitignore also applies).
+# Keep: pyproject.toml, uv.lock, .env.example, Dockerfile, app/, tests/
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Python
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.egg-info/
+build/
+dist/
+
+# Runtime data (downloads, job files, SQLite)
+downloads/
+data/
+tmp/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.part
+*.ytdl
+*.log
+logs/
+cookies.txt
