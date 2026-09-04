@@ -13,6 +13,8 @@ import {
   type Info,
   type Job,
   type JobCreate,
+  type Playlist,
+  playlistUrl,
   type VideoHeight,
 } from "@/lib/api";
 import {
@@ -39,7 +41,23 @@ import {
   VideoIcon,
 } from "@/components/icons";
 import { InstallPrompt } from "@/components/install-prompt";
-import { Card, EmptyState, Notice, Page, SectionLabel, Skeleton } from "@/components/ui";
+import {
+  type Allowance,
+  PLAYLIST_ACTIVE,
+  PlaylistCard,
+  PlaylistPreview,
+  PlaylistTargetChoice,
+  STAGE_LABEL,
+} from "@/components/playlist";
+import {
+  Card,
+  EmptyState,
+  Notice,
+  Page,
+  SectionLabel,
+  SiteFooter,
+  Skeleton,
+} from "@/components/ui";
 import { useAuth } from "@/lib/auth";
 
 type AudioOption = {
@@ -61,15 +79,8 @@ const AUDIO_OPTIONS: AudioOption[] = [
 const VIDEO_HEIGHTS: VideoHeight[] = [360, 480, 720, 1080, 1440, 2160];
 const TERMINAL = new Set(["done", "error", "cancelled"]);
 
-const STAGE_LABEL: Record<string, string> = {
-  queued: "Waiting in queue",
-  fetching: "Contacting YouTube",
-  downloading: "Downloading",
-  processing: "Converting",
-  done: "Ready",
-  error: "Failed",
-  cancelled: "Cancelled",
-};
+/** What the link offers: one video, a whole playlist, or the choice of both. */
+type Target = "video" | "playlist";
 
 function toHeight(n: number | null): VideoHeight | null {
   if (n === null) return null;
@@ -113,6 +124,12 @@ function DownloadScreen({ shared }: { shared: SharedLink | null }) {
   const [submitting, setSubmitting] = useState(false);
   const [recent, setRecent] = useState<Job[] | null>(null);
 
+  // Playlists. `target` is only a real question when the link carries a video
+  // id and a list id at once; a bare playlist link can only mean the playlist.
+  const [target, setTarget] = useState<Target>("video");
+  const [playlistInfo, setPlaylistInfo] = useState<Info | null>(null);
+  const [playlist, setPlaylist] = useState<Playlist | null>(null);
+
   const inputRef = useRef<HTMLInputElement>(null);
   const jobRef = useRef<HTMLElement>(null);
   // A shared link should show its preview at once, not after the typing pause.
@@ -149,6 +166,8 @@ function DownloadScreen({ shared }: { shared: SharedLink | null }) {
     setInfo(null);
     setInfoError(null);
     setFromShare(false);
+    setTarget("video");
+    setPlaylistInfo(null);
   }, []);
 
   // Metadata preview: instant for a shared link, debounced while typing.
@@ -200,8 +219,74 @@ function DownloadScreen({ shared }: { shared: SharedLink | null }) {
     return () => clearInterval(timer);
   }, [jobId, jobActive, refreshRecent, auth]);
 
+  // Today's allowance, so a playlist can say what it will cost before it starts.
+  // A signed-in user has a running total; a guest only has the limit.
+  const allowance: Allowance = useMemo(() => {
+    if (!auth.config?.enabled) return null; // auth off: no quota to speak of
+    if (auth.me) return { used: auth.me.downloads_today, limit: auth.me.daily_quota, guest: false };
+    return { used: null, limit: auth.config.anon_daily_limit, guest: true };
+  }, [auth.config, auth.me]);
+
+  // What the pasted link can mean. A bare playlist link has no video to choose,
+  // so the question is only asked for `watch?v=…&list=…`.
+  const playlistOnly = info?.kind === "playlist";
+  const bothOptions = info?.kind === "video" && !!info.playlist_id;
+  const wantsPlaylist = playlistOnly || (bothOptions && target === "playlist");
+  // For a bare playlist link the preview we already have IS the playlist.
+  const playlistPreview = playlistOnly ? info : playlistInfo;
+  const playlistPreviewLoading = wantsPlaylist && !playlistPreview;
+
+  // Asking for the playlist behind a video link costs a second preview call,
+  // so it only happens once the user actually picks "Whole playlist".
+  const listId = info?.playlist_id ?? null;
+  useEffect(() => {
+    if (!wantsPlaylist || playlistOnly || !listId || playlistInfo) return;
+    const ctrl = new AbortController();
+    api
+      .info(playlistUrl(listId), ctrl.signal)
+      .then(setPlaylistInfo)
+      .catch((e) => {
+        if (ctrl.signal.aborted) return;
+        setInfoError(
+          e instanceof ApiError ? e.message : "Could not load the playlist details.",
+        );
+        setTarget("video");
+      });
+    return () => ctrl.abort();
+  }, [wantsPlaylist, playlistOnly, listId, playlistInfo]);
+
+  // Poll the playlist the same way as a single job: its items carry their own
+  // progress, so one request keeps the whole list up to date.
+  const playlistId = playlist?.id ?? null;
+  const playlistActive = !!playlist && PLAYLIST_ACTIVE.has(playlist.status);
+  useEffect(() => {
+    if (!playlistId || !playlistActive) return;
+    const timer = setInterval(async () => {
+      try {
+        const next = await api.getPlaylist(playlistId);
+        setPlaylist(next);
+        if (!PLAYLIST_ACTIVE.has(next.status)) {
+          refreshRecent();
+          void auth.refreshMe();
+        }
+      } catch {
+        // keep the last known state; the next tick retries
+      }
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [playlistId, playlistActive, refreshRecent, auth]);
+
+  // Bring a starting playlist into view, exactly as a single job does.
+  useEffect(() => {
+    if (!playlistId) return;
+    jobRef.current?.scrollIntoView({ block: "center" });
+  }, [playlistId]);
+
   // Video presets that make sense for this video (never above what YouTube has).
-  const maxAvailable = info?.available_heights.length ? Math.max(...info.available_heights) : null;
+  // A playlist reports no heights, so every preset is offered and each video
+  // falls back on its own.
+  const maxAvailable =
+    !wantsPlaylist && info?.available_heights.length ? Math.max(...info.available_heights) : null;
   const videoPresets = useMemo(
     () => (maxAvailable ? VIDEO_HEIGHTS.filter((h) => h <= maxAvailable) : VIDEO_HEIGHTS),
     [maxAvailable],
@@ -225,13 +310,26 @@ function DownloadScreen({ shared }: { shared: SharedLink | null }) {
     }
   }, [updateUrl]);
 
-  const canSubmit = !!info && !loadingInfo && !submitting && !jobActive;
+  // A playlist over the server's item cap can never start, so the button says so
+  // by being unavailable rather than by failing after a round trip.
+  const overCap = wantsPlaylist && !!playlistPreview?.playlist_truncated;
+  const canSubmit =
+    !!info &&
+    !loadingInfo &&
+    !submitting &&
+    !jobActive &&
+    !playlistActive &&
+    !overCap &&
+    (!wantsPlaylist || !!playlistPreview);
 
   const submit = useCallback(async () => {
     if (!canSubmit) return;
     setSubmitting(true);
     setJobError(null);
-    const base = { url: url.trim(), mode };
+    // A playlist is started from the playlist address, so the server is never
+    // left guessing which of the two ids in `watch?v=…&list=…` we meant.
+    const link = wantsPlaylist && listId ? playlistUrl(listId) : url.trim();
+    const base = { url: link, mode };
     const body: JobCreate =
       mode === "audio"
         ? (() => {
@@ -240,25 +338,29 @@ function DownloadScreen({ shared }: { shared: SharedLink | null }) {
           })()
         : { ...base, video_height: effectiveHeight };
     try {
-      setJob(await api.createJob(body));
+      if (wantsPlaylist) setPlaylist(await api.createPlaylist(body));
+      else setJob(await api.createJob(body));
     } catch (e) {
+      // The server's refusals (over the cap, not enough quota left today) are
+      // already plain English, so they are shown exactly as they arrive.
       setJobError(e instanceof ApiError ? e.message : "Could not start the download.");
     } finally {
       setSubmitting(false);
     }
-  }, [canSubmit, url, mode, audioChoice, effectiveHeight]);
+  }, [canSubmit, url, mode, audioChoice, effectiveHeight, wantsPlaylist, listId]);
 
   const cancel = useCallback(async () => {
-    if (!jobId) return;
     try {
-      await api.cancelJob(jobId);
+      if (playlistId) await api.cancelPlaylist(playlistId);
+      else if (jobId) await api.cancelJob(jobId);
     } catch {
-      // The job may already have finished.
+      // The download may already have finished.
     }
-  }, [jobId]);
+  }, [jobId, playlistId]);
 
   const reset = useCallback(() => {
     setJob(null);
+    setPlaylist(null);
     setJobError(null);
   }, []);
 
@@ -281,9 +383,23 @@ function DownloadScreen({ shared }: { shared: SharedLink | null }) {
   // One polite live region for the whole flow, so a screen reader hears the
   // progress without the percentage being read out every second.
   const percentBucket = job ? Math.floor(job.progress.percent / 20) * 20 : 0;
+  const playlistDone = playlist ? playlist.completed_items : 0;
   const announcement = useMemo(() => {
     // Errors that are already marked up with role="alert" are left out here,
     // so a screen reader reads them once rather than twice.
+    if (playlist) {
+      switch (playlist.status) {
+        case "queued":
+        case "running":
+          return `Playlist downloading. ${playlistDone} of ${playlist.total_items} videos done.`;
+        case "cancelled":
+          return "Playlist cancelled.";
+        default:
+          return `Playlist finished. ${playlist.completed_items} of ${playlist.total_items} videos saved${
+            playlist.failed_items ? `, ${playlist.failed_items} failed` : ""
+          }. Save each file from the list.`;
+      }
+    }
     if (job) {
       switch (job.status) {
         case "done":
@@ -301,12 +417,14 @@ function DownloadScreen({ shared }: { shared: SharedLink | null }) {
       }
     }
     if (loadingInfo) return "Loading video details.";
+    if (wantsPlaylist && playlistPreview)
+      return `Found the playlist ${playlistPreview.title}, ${playlistPreview.playlist_count ?? 0} videos.`;
     if (info)
       return `Found ${info.title}${info.channel ? ` by ${info.channel}` : ""}${
         info.duration_sec != null ? `, ${spokenDuration(info.duration_sec)}` : ""
       }.`;
     return "";
-  }, [job, info, loadingInfo, percentBucket]);
+  }, [job, info, loadingInfo, percentBucket, playlist, playlistDone, wantsPlaylist, playlistPreview]);
 
   const others = (recent ?? []).filter((r) => r.id !== job?.id).slice(0, 5);
 
@@ -375,6 +493,12 @@ function DownloadScreen({ shared }: { shared: SharedLink | null }) {
           <div className="mt-3 flex min-h-18 flex-col justify-center">
             {loadingInfo ? (
               <PreviewSkeleton />
+            ) : info && wantsPlaylist ? (
+              <PlaylistPreview
+                info={playlistPreview}
+                allowance={allowance}
+                loading={playlistPreviewLoading}
+              />
             ) : info ? (
               <Preview info={info} shared={fromShare} />
             ) : infoError ? (
@@ -391,6 +515,17 @@ function DownloadScreen({ shared }: { shared: SharedLink | null }) {
               </p>
             )}
           </div>
+
+          {/* The link holds a video and a playlist: ask which one they meant. */}
+          {bothOptions && (
+            <div className="mt-3">
+              <PlaylistTargetChoice
+                target={target}
+                onChange={setTarget}
+                count={playlistInfo?.playlist_count ?? null}
+              />
+            </div>
+          )}
         </Card>
 
         {/* Mode */}
@@ -469,6 +604,12 @@ function DownloadScreen({ shared }: { shared: SharedLink | null }) {
               do.
             </p>
           )}
+          {mode === "video" && wantsPlaylist && (
+            <p className="mt-2 text-xs text-muted">
+              Every quality is offered because the videos have not been checked one by one: each
+              one falls back to the best it actually has, so a 4K pick can still save a 720p file.
+            </p>
+          )}
           {mode === "audio" && audioChoice === "mp3-320" && (
             <p className="mt-2 text-xs text-muted">
               YouTube&apos;s source audio is about 128 to 160 kbps. 320 kbps makes a bigger file, not
@@ -483,9 +624,9 @@ function DownloadScreen({ shared }: { shared: SharedLink | null }) {
         </section>
 
         {/* Job */}
-        {(job || jobError) && (
+        {(job || playlist || jobError) && (
           <section ref={jobRef} className="mt-section" aria-label="Download status">
-            {jobError && !job && (
+            {jobError && !job && !playlist && (
               <div className="rounded-card border border-danger/40 bg-danger-soft px-3 py-3" role="alert">
                 <p className="text-sm font-medium text-danger">{jobError}</p>
                 <button
@@ -496,6 +637,9 @@ function DownloadScreen({ shared }: { shared: SharedLink | null }) {
                   Try again
                 </button>
               </div>
+            )}
+            {playlist && (
+              <PlaylistCard playlist={playlist} onCancel={cancel} onStartOver={startOver} />
             )}
             {job && <JobCard job={job} onCancel={cancel} onReset={reset} onNext={startOver} />}
           </section>
@@ -539,10 +683,7 @@ function DownloadScreen({ shared }: { shared: SharedLink | null }) {
           )}
         </section>
 
-        <footer className="mt-10 text-xs leading-relaxed text-muted">
-          For personal use with content you have the right to download. Files are deleted from the
-          server one hour after they finish.
-        </footer>
+        <SiteFooter className="mt-10" />
       </Page>
 
       <BottomDock
@@ -551,10 +692,12 @@ function DownloadScreen({ shared }: { shared: SharedLink | null }) {
             mode={mode}
             info={info}
             job={job}
+            playlist={playlist}
             selectedLabel={selectedLabel}
             canSubmit={canSubmit}
             submitting={submitting}
             onSubmit={submit}
+            onShowFiles={() => jobRef.current?.scrollIntoView({ block: "start" })}
           />
         }
       />
@@ -568,22 +711,64 @@ function ActionBar({
   mode,
   info,
   job,
+  playlist,
   selectedLabel,
   canSubmit,
   submitting,
   onSubmit,
+  onShowFiles,
 }: {
   mode: Mode;
   info: Info | null;
   job: Job | null;
+  playlist: Playlist | null;
   selectedLabel: string;
   canSubmit: boolean;
   submitting: boolean;
   onSubmit: () => void;
+  onShowFiles: () => void;
 }) {
+  const playlistRunning = !!playlist && PLAYLIST_ACTIVE.has(playlist.status);
+  const playlistFinished = !!playlist && !playlistRunning;
+  // Job-only, and written as one expression so TypeScript keeps narrowing `job`
+  // for the branches below. The playlist path returns before any of it.
   const active = !!job && !TERMINAL.has(job.status);
   const done = job?.status === "done" && job.file_available;
-  const percent = job?.progress.percent ?? 0;
+  const percent = playlist ? playlist.percent : (job?.progress.percent ?? 0);
+
+  // A finished playlist has many files, so the bar points at the list instead of
+  // pretending there is one thing to save.
+  if (playlist) {
+    return (
+      <>
+        {playlistRunning && (
+          <span
+            aria-hidden
+            className={`absolute inset-x-0 top-0 h-0.5 origin-left transition-[transform] duration-300 ease-soft ${
+              mode === "audio" ? "bg-amber" : "bg-accent"
+            }`}
+            style={{ transform: `scaleX(${Math.max(percent, 3) / 100})` }}
+          />
+        )}
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-semibold text-ink">
+            {playlistRunning
+              ? `Playlist · ${playlist.completed_items} of ${playlist.total_items}`
+              : `${playlist.completed_items} of ${playlist.total_items} files ready`}
+          </p>
+          <p className="truncate text-xs text-muted">{playlist.title ?? "Playlist"}</p>
+        </div>
+        <button
+          type="button"
+          onClick={playlistFinished ? onShowFiles : onSubmit}
+          disabled={playlistRunning}
+          className="tap shrink-0 rounded-control bg-ok px-5 text-sm font-semibold text-on-ok transition-ui disabled:cursor-not-allowed disabled:bg-surface-2 disabled:text-muted disabled:opacity-100"
+        >
+          {playlistRunning ? "Working…" : "See files"}
+        </button>
+      </>
+    );
+  }
 
   return (
     <>
@@ -744,7 +929,7 @@ function Preview({ info, shared }: { info: Info; shared: boolean }) {
           </p>
           {info.playlist_id && (
             <p className="mt-1 text-xs font-medium text-amber">
-              Part of a playlist. Only this video will be downloaded.
+              This link is part of a playlist. Choose below.
             </p>
           )}
         </div>

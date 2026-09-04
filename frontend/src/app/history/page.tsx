@@ -6,8 +6,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { BottomDock } from "@/components/bottom-nav";
 import { AppHeader } from "@/components/header";
 import { AudioIcon, InboxIcon, VideoIcon } from "@/components/icons";
-import { ErrorState, Page, Skeleton } from "@/components/ui";
-import { api, type Job } from "@/lib/api";
+import { PLAYLIST_ACTIVE, PlaylistHistoryRow } from "@/components/playlist";
+import { ErrorState, Page, SiteFooter, Skeleton } from "@/components/ui";
+import { api, type Job, type Playlist } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { formatBytes, formatDay } from "@/lib/format";
 
@@ -23,9 +24,17 @@ const STAGE: Record<string, string> = {
 
 const RUNNING = ["queued", "fetching", "downloading", "processing"];
 
+/**
+ * One list holds two kinds of thing. Playlist items are deliberately kept out
+ * of the single-download list by the API, so a playlist appears once, as itself,
+ * and opens to show the videos inside it.
+ */
+type Entry = { kind: "job"; at: string; job: Job } | { kind: "playlist"; at: string; pl: Playlist };
+
 export default function HistoryPage() {
   const { ready, user, available } = useAuth();
   const [jobs, setJobs] = useState<Job[] | null>(null);
+  const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [error, setError] = useState(false);
   const [attempt, setAttempt] = useState(0);
 
@@ -41,12 +50,16 @@ export default function HistoryPage() {
     let stopped = false;
     const load = async () => {
       try {
-        const list = await api.listJobs(50);
+        const [list, lists] = await Promise.all([api.listJobs(50), api.listPlaylists(20)]);
         if (stopped) return;
         setJobs(list);
+        setPlaylists(lists);
         setError(false);
         // Keep refreshing while something is still running.
-        if (list.some((j) => RUNNING.includes(j.status))) timer = setTimeout(load, 2000);
+        const busy =
+          list.some((j) => RUNNING.includes(j.status)) ||
+          lists.some((p) => PLAYLIST_ACTIVE.has(p.status));
+        if (busy) timer = setTimeout(load, 2000);
       } catch {
         if (!stopped) setError(true);
       }
@@ -58,18 +71,25 @@ export default function HistoryPage() {
     };
   }, [ready, user, attempt]);
 
-  // Group by the day the download started, newest first.
+  // Group by the day it started, newest first, with playlists in line.
   const days = useMemo(() => {
     if (!jobs) return [];
-    const buckets = new Map<string, Job[]>();
-    for (const job of jobs) {
-      const key = formatDay(job.created_at);
+    const entries: Entry[] = [
+      ...jobs.map((job): Entry => ({ kind: "job", at: job.created_at, job })),
+      ...playlists.map((pl): Entry => ({ kind: "playlist", at: pl.created_at, pl })),
+    ].sort((a, b) => b.at.localeCompare(a.at));
+
+    const buckets = new Map<string, Entry[]>();
+    for (const entry of entries) {
+      const key = formatDay(entry.at);
       const list = buckets.get(key);
-      if (list) list.push(job);
-      else buckets.set(key, [job]);
+      if (list) list.push(entry);
+      else buckets.set(key, [entry]);
     }
     return [...buckets.entries()];
-  }, [jobs]);
+  }, [jobs, playlists]);
+
+  const empty = !!jobs && jobs.length === 0 && playlists.length === 0;
 
   return (
     <>
@@ -100,7 +120,7 @@ export default function HistoryPage() {
             />
           ) : jobs === null ? (
             <ListSkeleton />
-          ) : jobs.length === 0 ? (
+          ) : empty ? (
             <div className="rounded-card border border-dashed border-line bg-surface/60 px-4 py-10 text-center">
               <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-surface-2 text-muted">
                 <InboxIcon className="h-6 w-6" />
@@ -122,15 +142,21 @@ export default function HistoryPage() {
                 <section key={day} aria-label={day}>
                   <h2 className="mb-2 text-label uppercase text-muted">{day}</h2>
                   <ul className="divide-y divide-line-soft overflow-hidden rounded-card border border-line bg-surface">
-                    {list.map((j) => (
-                      <Row key={j.id} job={j} />
-                    ))}
+                    {list.map((entry) =>
+                      entry.kind === "playlist" ? (
+                        <PlaylistHistoryRow key={entry.pl.id} playlist={entry.pl} />
+                      ) : (
+                        <Row key={entry.job.id} job={entry.job} />
+                      ),
+                    )}
                   </ul>
                 </section>
               ))}
             </div>
           )}
         </div>
+
+        <SiteFooter className="mt-10" />
       </Page>
       <BottomDock />
     </>

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import type { InputHTMLAttributes, ReactNode } from "react";
 
 import { AlertIcon } from "@/components/icons";
@@ -153,6 +154,40 @@ export function Divider({ label }: { label: string }) {
       {label}
       <span className="h-px flex-1 bg-line-soft" aria-hidden />
     </div>
+  );
+}
+
+/**
+ * The same closing note on every screen: what this app is for, and the pages
+ * that say so properly. One sentence, then the links.
+ */
+export function SiteFooter({ className = "" }: { className?: string }) {
+  const links = [
+    { href: "/terms", label: "Terms" },
+    { href: "/privacy", label: "Privacy" },
+    { href: "/dmca", label: "Copyright" },
+  ];
+  return (
+    <footer className={`text-xs leading-relaxed text-muted ${className}`}>
+      <p>
+        For personal use with content you have the right to download. Files are deleted from the
+        server one hour after they finish.
+      </p>
+      <p className="mt-2 flex flex-wrap items-center gap-x-1 gap-y-1">
+        {links.map((l, i) => (
+          <span key={l.href} className="flex items-center gap-1">
+            {i > 0 && (
+              <span aria-hidden className="text-line">
+                ·
+              </span>
+            )}
+            <Link href={l.href} className="underline-offset-2 hover:text-ink-2 hover:underline">
+              {l.label}
+            </Link>
+          </span>
+        ))}
+      </p>
+    </footer>
   );
 }
 

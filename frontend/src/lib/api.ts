@@ -32,6 +32,13 @@ export type Health = {
   database_ok: boolean;
 };
 
+export type PlaylistItemPreview = {
+  id: string;
+  title: string;
+  duration_sec: number | null;
+  thumbnail: string | null;
+};
+
 export type Info = {
   id: string;
   title: string;
@@ -40,11 +47,23 @@ export type Info = {
   thumbnail: string | null;
   webpage_url: string;
   is_live: boolean;
+  /** Empty for a playlist: the API would have to resolve every video to know. */
   available_heights: number[];
   has_audio: boolean;
   kind: "video" | "playlist";
   playlist_id: string | null;
+  /** Playlist previews only. */
+  playlist_count?: number | null;
+  /** True when the playlist holds more videos than the server accepts at once. */
+  playlist_truncated?: boolean;
+  playlist_limit?: number | null;
+  items?: PlaylistItemPreview[] | null;
 };
+
+/** The address of a playlist, which is what the preview and the job endpoints take. */
+export function playlistUrl(playlistId: string): string {
+  return `https://www.youtube.com/playlist?list=${playlistId}`;
+}
 
 export type AudioFormat = "mp3" | "m4a" | "opus";
 export type AudioBitrate = 128 | 192 | 320;
@@ -100,6 +119,42 @@ export type Job = {
   error: { code: string; message: string } | null;
   created_at: string;
   finished_at: string | null;
+  /** Set when this download is one video of a playlist run. */
+  playlist_job_id?: string | null;
+  playlist_index?: number | null;
+};
+
+export type PlaylistStatus =
+  | "queued"
+  | "running"
+  | "done"
+  /** Finished, but some videos failed or were cancelled one by one. */
+  | "partial"
+  | "error"
+  | "cancelled";
+
+export type Playlist = {
+  id: string;
+  playlist_id: string;
+  url: string;
+  title: string | null;
+  channel: string | null;
+  thumbnail: string | null;
+  mode: "audio" | "video";
+  format: string;
+  quality: string | null;
+  label: string;
+  status: PlaylistStatus;
+  total_items: number;
+  completed_items: number;
+  failed_items: number;
+  cancelled_items: number;
+  percent: number;
+  error: { code: string; message: string } | null;
+  created_at: string;
+  finished_at: string | null;
+  /** Null in list views. Fetch the playlist by id to get its videos. */
+  items: Job[] | null;
 };
 
 type TokenProvider = () => Promise<string | null>;
@@ -221,4 +276,12 @@ export const api = {
   listJobs: (limit = 10) => request<Job[]>(`/api/v1/jobs?limit=${limit}`),
   cancelJob: (id: string) => request<void>(`/api/v1/jobs/${id}`, { method: "DELETE" }),
   fileUrl: (id: string) => `${API_URL}/api/v1/jobs/${id}/file`,
+
+  // Playlists. Every video becomes an ordinary job, so the item files come from
+  // fileUrl() above and one item can be cancelled with cancelJob().
+  createPlaylist: (body: JobCreate) =>
+    request<Playlist>("/api/v1/playlists", { method: "POST", body: JSON.stringify(body) }),
+  getPlaylist: (id: string) => request<Playlist>(`/api/v1/playlists/${id}`),
+  listPlaylists: (limit = 20) => request<Playlist[]>(`/api/v1/playlists?limit=${limit}`),
+  cancelPlaylist: (id: string) => request<void>(`/api/v1/playlists/${id}`, { method: "DELETE" }),
 };
