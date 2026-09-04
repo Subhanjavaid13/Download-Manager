@@ -74,14 +74,14 @@ def env(tmp_path: Path):
     factory = make_session_factory(engine)
     storage = LocalStorage(tmp_path / "files")
 
-    def make(downloader) -> JobStore:
+    def make(downloader, retention_minutes: int = 0) -> JobStore:
         return JobStore(
             downloader=downloader,
             storage=storage,
             session_factory=factory,
             work_dir=tmp_path / "work",
             concurrency=2,
-            ttl_minutes=60,
+            retention_minutes=retention_minutes,
             sweep_interval_sec=3600,
         )
 
@@ -107,8 +107,7 @@ def test_job_runs_to_done_and_file_is_served(env) -> None:
     assert done["filename"].endswith(".mp3")
     assert done["size_bytes"] == 10
     assert done["file_url"] == f"/api/v1/jobs/{job['id']}/file"
-    assert done["direct_url"] is None  # local storage streams through the API
-    assert done["expires_at"] is not None
+    assert done["expires_at"] is None  # kept: there is no deadline to report
     assert done["progress"]["percent"] == 100.0
 
     path, filename = store.local_file(job["id"], ANON)
@@ -218,4 +217,67 @@ def test_recover_marks_inflight_as_interrupted_and_requeues_queued(env) -> None:
     assert by_mode["audio"]["error"]["code"] == "interrupted"
     assert by_mode["video"]["status"] == "done"  # re-queued and completed with the fake
     assert by_mode["video"]["label"] == "MP4 720p"
+    store.shutdown()
+
+
+def test_files_are_kept_by_default(env) -> None:
+    """The point of the app: the file is the user's, so nothing takes it away."""
+    make, _f, _s = env
+    store = make(FakeDownloader())  # no retention configured, which is the default
+    assert store._retention is None
+    assert store._janitor is None  # nothing to sweep, so no janitor thread at all
+
+    job = store.submit(video_id=INFO.id, req=AUDIO, owner=ANON, info=INFO)
+    done = wait_for(lambda: (j := store.get(job["id"], ANON)) and j["status"] == "done" and j)
+    assert done["expires_at"] is None
+
+    path, _ = store.local_file(job["id"], ANON)
+    assert store.sweep() == 0
+    assert path.exists()
+    assert store.get(job["id"], ANON)["file_available"] is True
+    store.shutdown()
+
+
+def test_a_retention_period_still_expires_files(env) -> None:
+    """A shared server can still opt in to a deadline, and then it is reported."""
+    make, _f, _s = env
+    store = make(FakeDownloader(), retention_minutes=60)
+    job = store.submit(video_id=INFO.id, req=AUDIO, owner=ANON, info=INFO)
+    done = wait_for(lambda: (j := store.get(job["id"], ANON)) and j["status"] == "done" and j)
+    assert done["expires_at"] is not None
+    store.shutdown()
+
+
+def test_delete_removes_the_file_and_the_row(env, tmp_path: Path) -> None:
+    make, _f, _s = env
+    store = make(FakeDownloader())
+    job = store.submit(video_id=INFO.id, req=AUDIO, owner=ANON, info=INFO)
+    wait_for(lambda: store.get(job["id"], ANON)["status"] == "done")
+    path, _ = store.local_file(job["id"], ANON)
+    assert path.exists()
+
+    assert store.delete(job["id"], OTHER) is False  # not yours
+    assert path.exists()
+
+    assert store.delete(job["id"], ANON) is True
+    assert not path.exists()
+    assert not path.parent.exists()  # the job folder goes too
+    assert store.get(job["id"], ANON) is None
+    assert store.list_for(ANON) == []
+    assert store.delete(job["id"], ANON) is False  # already gone
+    store.shutdown()
+
+
+def test_delete_refuses_while_the_download_is_running(env) -> None:
+    make, _f, _s = env
+    dl = FakeDownloader(block=True)
+    store = make(dl)
+    job = store.submit(video_id=INFO.id, req=AUDIO, owner=ANON, info=INFO)
+    assert dl.started.wait(5)
+    assert store.delete(job["id"], ANON) is False
+    assert store.get(job["id"], ANON) is not None
+
+    store.cancel(job["id"], ANON)
+    wait_for(lambda: store.get(job["id"], ANON)["status"] == "cancelled")
+    assert store.delete(job["id"], ANON) is True  # cancelled rows can be tidied away
     store.shutdown()

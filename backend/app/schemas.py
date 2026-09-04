@@ -14,7 +14,6 @@ class HealthResponse(BaseModel):
     auth_enabled: bool
     require_auth: bool
     signup_enabled: bool
-    storage: Literal["local", "r2"]
     database: Literal["sqlite", "postgresql", "other"]
     database_ok: bool
 
@@ -88,9 +87,10 @@ class JobResponse(BaseModel):
     filename: str | None
     size_bytes: int | None
     file_available: bool
-    file_url: str | None = Field(None, description="API path that streams or redirects to the file")
-    direct_url: str | None = Field(None, description="Signed storage link when R2 is active")
-    expires_at: str | None
+    file_url: str | None = Field(None, description="API path that streams the file")
+    expires_at: str | None = Field(
+        None, description="When the server will delete the file. Null when it is kept."
+    )
     error: ErrorOut | None
     created_at: str
     finished_at: str | None

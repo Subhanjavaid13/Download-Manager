@@ -21,10 +21,20 @@ export default function PrivacyPage() {
 
       <LegalHeading>The files you download</LegalHeading>
       <p>
-        A finished file lives on the server for one hour and is then deleted by a scheduled job. The
-        download link stops working at the same moment. Nobody browses these files, and they are not
-        listed anywhere public. Partly downloaded files are deleted as soon as a download fails or
-        is cancelled.
+        A finished file is written to a folder on the machine that runs this app, and it stays
+        there. It is not uploaded to any storage service, any content network, or anywhere else:
+        the only copy is the one on that machine, plus whatever you save to your own device. Nobody
+        browses these files, they are not listed anywhere public, and no other user can reach them.
+        Partly downloaded files are deleted as soon as a download fails or is cancelled.
+      </p>
+      <p>
+        Because nothing expires on its own, deleting is something you do. Each download in your
+        history has a delete button that removes the file and the entry together, and a playlist
+        can be deleted the same way. Deleting your account removes every file its downloads left
+        behind. If the operator of this instance has set a retention period instead, so that
+        finished files are deleted automatically after a while, the app shows you the deadline on
+        the download itself, and this is what they set:{" "}
+        <Fill>FILE RETENTION, IF ANY</Fill>.
       </p>
 
       <LegalHeading>Your download history</LegalHeading>
@@ -100,10 +110,12 @@ export default function PrivacyPage() {
 
       <LegalHeading>Deleting everything</LegalHeading>
       <p>
-        The Account page has a delete button. It removes your history rows, your stored files, your
-        profile, and your login. It cannot be undone, and it is immediate. If you never made an
-        account, clearing your browser data is the equivalent, and the rows you left behind expire
-        with the events above.
+        The Account page has a delete button. It removes your history rows, every file those
+        downloads left on the server, your profile, and your login. It cannot be undone, and it is
+        immediate. If you never made an account, delete the downloads you want gone from your
+        history first, since those files are kept until something deletes them; clearing your
+        browser data then detaches you from anything left, and the events above expire on their
+        own.
       </p>
 
       <LegalHeading>Your rights</LegalHeading>

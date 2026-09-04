@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { BottomDock } from "@/components/bottom-nav";
 import { AppHeader } from "@/components/header";
-import { AudioIcon, InboxIcon, VideoIcon } from "@/components/icons";
+import { AudioIcon, InboxIcon, TrashIcon, VideoIcon } from "@/components/icons";
 import { PLAYLIST_ACTIVE, PlaylistHistoryRow } from "@/components/playlist";
 import { ErrorState, Page, SiteFooter, Skeleton } from "@/components/ui";
 import { api, type Job, type Playlist } from "@/lib/api";
@@ -42,6 +42,15 @@ export default function HistoryPage() {
     setJobs(null);
     setError(false);
     setAttempt((n) => n + 1);
+  }, []);
+
+  // Deleting is the only thing that removes a download now, so the list has to
+  // react at once rather than waiting for the next poll.
+  const forgetJob = useCallback((id: string) => {
+    setJobs((list) => list?.filter((j) => j.id !== id) ?? list);
+  }, []);
+  const forgetPlaylist = useCallback((id: string) => {
+    setPlaylists((list) => list.filter((p) => p.id !== id));
   }, []);
 
   useEffect(() => {
@@ -107,7 +116,7 @@ export default function HistoryPage() {
               to keep your history on every device.
             </>
           ) : (
-            "Files are removed from the server an hour after they finish. The list stays."
+            "Your files stay in the download folder until you remove them here."
           )}
         </p>
 
@@ -144,9 +153,13 @@ export default function HistoryPage() {
                   <ul className="divide-y divide-line-soft overflow-hidden rounded-card border border-line bg-surface">
                     {list.map((entry) =>
                       entry.kind === "playlist" ? (
-                        <PlaylistHistoryRow key={entry.pl.id} playlist={entry.pl} />
+                        <PlaylistHistoryRow
+                          key={entry.pl.id}
+                          playlist={entry.pl}
+                          onRemoved={forgetPlaylist}
+                        />
                       ) : (
-                        <Row key={entry.job.id} job={entry.job} />
+                        <Row key={entry.job.id} job={entry.job} onRemoved={forgetJob} />
                       ),
                     )}
                   </ul>
@@ -163,16 +176,36 @@ export default function HistoryPage() {
   );
 }
 
-function Row({ job }: { job: Job }) {
+function Row({ job, onRemoved }: { job: Job; onRemoved: (id: string) => void }) {
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
   const tone = job.mode === "audio" ? "text-amber" : "text-accent";
+  const finished = !RUNNING.includes(job.status);
   const detail =
     job.status === "done"
       ? job.file_available
         ? formatBytes(job.size_bytes)
-        : "link expired"
+        : "file removed"
       : job.status === "error"
         ? (job.error?.message ?? "Failed")
         : (STAGE[job.status] ?? job.status);
+
+  const remove = async () => {
+    const name = job.title ?? job.video_id;
+    const question = job.file_available
+      ? `Delete "${name}"? The file is deleted from the download folder and this entry goes with it. This cannot be undone.`
+      : `Remove "${name}" from your history? This cannot be undone.`;
+    if (!window.confirm(question)) return;
+    setBusy(true);
+    setFailed(false);
+    try {
+      await api.deleteJob(job.id);
+      onRemoved(job.id);
+    } catch {
+      setBusy(false);
+      setFailed(true);
+    }
+  };
 
   return (
     <li className="flex items-center gap-3 px-3 py-3">
@@ -197,7 +230,7 @@ function Row({ job }: { job: Job }) {
         <p className="truncate text-xs text-muted">
           <span className={`font-medium ${tone}`}>{job.label}</span>
           {" · "}
-          {detail}
+          {failed ? <span className="text-danger">Could not delete it. Try again.</span> : detail}
         </p>
       </div>
       {job.file_available ? (
@@ -221,6 +254,17 @@ function Row({ job }: { job: Job }) {
         <span className="shrink-0 rounded-md bg-accent-soft px-2 py-1 font-mono text-label uppercase text-accent">
           {STAGE[job.status] ?? job.status}
         </span>
+      )}
+      {finished && (
+        <button
+          type="button"
+          onClick={remove}
+          disabled={busy}
+          aria-label={`Delete ${job.title ?? job.video_id}`}
+          className="tap flex shrink-0 items-center justify-center rounded-control border border-line px-2 text-muted transition-ui hover:border-danger hover:bg-danger-soft hover:text-danger disabled:opacity-45"
+        >
+          <TrashIcon className="h-4 w-4" />
+        </button>
       )}
     </li>
   );

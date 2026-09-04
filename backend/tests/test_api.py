@@ -5,7 +5,8 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from app.core.downloader import MediaInfo, Progress
+from app.core.downloader import CancelledError, MediaInfo, Progress
+from app.jobs.store import Owner
 from app.main import app
 
 CLIENT = {"X-Client-Id": "browser-test-0001"}
@@ -61,7 +62,7 @@ def test_health(client: TestClient) -> None:
     body = r.json()
     assert body["status"] == "ok"
     assert body["auth_enabled"] is False
-    assert body["storage"] == "local"
+    assert "storage" not in body  # there is only one place a file can be
     assert body["database"] == "sqlite"
     assert body["database_ok"] is True  # a real "select 1", not a cached flag
 
@@ -144,3 +145,60 @@ def test_file_not_ready_is_409(client: TestClient) -> None:
     job_id = r.json()["id"]
     assert client.get(f"/api/v1/jobs/{job_id}/file", headers=CLIENT).status_code == 409
     _wait_done(client, job_id)
+
+
+def test_a_finished_file_is_kept_and_not_swept(client: TestClient) -> None:
+    r = client.post("/api/v1/jobs", json={"url": "https://youtu.be/dQw4w9WgXcQ"}, headers=CLIENT)
+    job = _wait_done(client, r.json()["id"])
+    assert job["expires_at"] is None  # nothing promises to take it away
+
+    assert app.state.jobs.sweep() == 0
+    again = client.get(f"/api/v1/jobs/{job['id']}", headers=CLIENT).json()
+    assert again["file_available"] is True
+    assert client.get(f"/api/v1/jobs/{job['id']}/file", headers=CLIENT).status_code == 200
+
+
+def test_delete_removes_the_file_and_the_row(client: TestClient) -> None:
+    r = client.post("/api/v1/jobs", json={"url": "https://youtu.be/dQw4w9WgXcQ"}, headers=CLIENT)
+    job = _wait_done(client, r.json()["id"])
+    path, _name = app.state.jobs.local_file(job["id"], Owner(client_id=CLIENT["X-Client-Id"]))
+    assert path.exists()
+
+    # A stranger cannot delete it, and gets the same 404 as for any other row.
+    assert (
+        client.delete(
+            f"/api/v1/jobs/{job['id']}", headers={"X-Client-Id": "nope-nope1"}
+        ).status_code
+        == 404
+    )
+    assert path.exists()
+
+    assert client.delete(f"/api/v1/jobs/{job['id']}", headers=CLIENT).status_code == 204
+    assert not path.exists()
+    assert client.get(f"/api/v1/jobs/{job['id']}", headers=CLIENT).status_code == 404
+    assert client.delete(f"/api/v1/jobs/{job['id']}", headers=CLIENT).status_code == 404
+
+
+def test_delete_refuses_a_running_download_and_cancel_is_its_own_verb(client: TestClient) -> None:
+    class Blocking(StubDownloader):
+        """Runs until it is cancelled, like the real downloader does."""
+
+        def download(self, url, req, out_dir, on_progress=None, cancel_event=None):
+            import time
+
+            while not (cancel_event and cancel_event.is_set()):
+                time.sleep(0.01)
+            raise CancelledError()
+
+    app.state.jobs._downloader = Blocking()
+    r = client.post("/api/v1/jobs", json={"url": "https://youtu.be/dQw4w9WgXcQ"}, headers=CLIENT)
+    job_id = r.json()["id"]
+
+    conflict = client.delete(f"/api/v1/jobs/{job_id}", headers=CLIENT)
+    assert conflict.status_code == 409
+    assert "Cancel it first" in conflict.json()["detail"]
+
+    assert client.post(f"/api/v1/jobs/{job_id}/cancel", headers=CLIENT).status_code == 204
+    ended = _wait_done(client, job_id)
+    assert ended["status"] == "cancelled"
+    assert client.delete(f"/api/v1/jobs/{job_id}", headers=CLIENT).status_code == 204

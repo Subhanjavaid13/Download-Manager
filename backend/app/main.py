@@ -31,7 +31,7 @@ from app.schemas import HealthResponse
 from app.services.accounts import Accounts
 from app.services.analytics import Analytics
 from app.services.bans import Bans
-from app.storage import build_storage
+from app.storage import LocalStorage
 
 log = logging.getLogger("app")
 
@@ -83,8 +83,7 @@ async def lifespan(app: FastAPI):
     init_db(engine)
     app.state.engine = engine
 
-    settings.download_dir.mkdir(parents=True, exist_ok=True)
-    storage = build_storage(settings)
+    storage = LocalStorage(settings.download_dir)
     app.state.storage = storage
 
     session_factory = make_session_factory(engine)
@@ -128,17 +127,23 @@ async def lifespan(app: FastAPI):
         session_factory=session_factory,
         work_dir=settings.download_dir / "_work",
         concurrency=settings.worker_concurrency,
-        ttl_minutes=settings.job_ttl_minutes,
+        retention_minutes=settings.file_retention_minutes,
         on_finish=on_finish,
         on_playlist_finish=on_playlist_finish,
     )
     requeued = app.state.jobs.recover()
     app.state.jobs.sweep()
+    keep = (
+        f"{settings.file_retention_minutes} min"
+        if settings.file_retention_minutes > 0
+        else "forever"
+    )
     log.info(
-        "ready: ffmpeg=%s yt-dlp=%s storage=%s db=%s requeued=%d",
+        "ready: ffmpeg=%s yt-dlp=%s files=%s (kept %s) db=%s requeued=%d",
         ffmpeg.version,
         yt_dlp.version.__version__,
-        storage.kind,
+        storage.root,
+        keep,
         engine.dialect.name,
         requeued,
     )
@@ -195,7 +200,6 @@ def create_app() -> FastAPI:
             auth_enabled=auth_enabled(settings),
             require_auth=settings.require_auth,
             signup_enabled=bool(settings.supabase_url and settings.supabase_anon_key),
-            storage=app.state.storage.kind,
             database=dialect if dialect in ("sqlite", "postgresql") else "other",
             database_ok=database_ok,
         )

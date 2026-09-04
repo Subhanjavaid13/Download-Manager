@@ -65,14 +65,14 @@ def env(tmp_path: Path):
     factory = make_session_factory(engine)
     storage = LocalStorage(tmp_path / "files")
 
-    def make(downloader) -> JobStore:
+    def make(downloader, retention_minutes: int = 0) -> JobStore:
         return JobStore(
             downloader=downloader,
             storage=storage,
             session_factory=factory,
             work_dir=tmp_path / "work",
             concurrency=2,
-            ttl_minutes=60,
+            retention_minutes=retention_minutes,
             sweep_interval_sec=3600,
         )
 
@@ -326,4 +326,49 @@ def test_an_empty_playlist_is_refused_before_a_row_is_written(env) -> None:
         store.submit_playlist(playlist_id="PL1234", entries=[], req=AUDIO, owner=ANON)
     with session_scope(factory) as s:
         assert s.scalars(select(Playlist)).all() == []
+    store.shutdown()
+
+
+def test_delete_playlist_removes_every_file_and_every_row(env) -> None:
+    make, factory, _t = env
+    store = make(FakePlaylistDownloader())
+    created = submit(store)
+    done = finished(store, created["id"])
+    paths = [store.local_file(i["id"], ANON)[0] for i in done["items"]]
+    assert all(p.exists() for p in paths)
+
+    assert store.delete_playlist(created["id"], OTHER) is False  # not yours
+    assert all(p.exists() for p in paths)
+
+    assert store.delete_playlist(created["id"], ANON) is True
+    assert not any(p.exists() for p in paths)
+    assert store.get_playlist(created["id"], ANON) is None
+    assert store.list_playlists(ANON) == []
+    with session_scope(factory) as s:
+        assert s.scalars(select(Download)).all() == []
+        assert s.scalars(select(Playlist)).all() == []
+    store.shutdown()
+
+
+def test_a_single_item_cannot_be_deleted_on_its_own(env) -> None:
+    """Removing one row would make the parent's "3 of 3 done" a lie."""
+    make, _f, _t = env
+    store = make(FakePlaylistDownloader())
+    done = finished(store, submit(store)["id"])
+    assert store.delete(done["items"][0]["id"], ANON) is False
+    assert store.local_file(done["items"][0]["id"], ANON) is not None
+    store.shutdown()
+
+
+def test_delete_refuses_while_the_playlist_is_running(env) -> None:
+    make, _f, _t = env
+    downloader = FakePlaylistDownloader(block_ids=("aaaaaaaaaaa",))
+    store = make(downloader)
+    created = submit(store)
+    assert downloader.blocked.wait(5)
+    assert store.delete_playlist(created["id"], ANON) is False
+
+    store.cancel_playlist(created["id"], ANON)
+    finished(store, created["id"])
+    assert store.delete_playlist(created["id"], ANON) is True
     store.shutdown()

@@ -1,11 +1,13 @@
+"""The download folder: moving finished files in, serving them, deleting them.
+
+There is only one storage backend now. Everything a job produces lands on the
+disk of whoever runs the API, so these tests are about the folder itself and
+about the guard that stops a crafted key reaching outside it.
+"""
+
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
 
-import boto3
-import pytest
-from moto import mock_aws
-
-from app.storage import LocalStorage, R2Storage, content_disposition
+from app.storage import LocalStorage, content_disposition
 
 
 def _make_file(tmp_path: Path, name: str = "Song [abc].mp3") -> Path:
@@ -28,42 +30,46 @@ def test_local_storage_moves_file_and_serves_it(tmp_path: Path) -> None:
     stored = storage.store("job1", src)
     assert stored.key == "job1/Song [abc].mp3"
     assert stored.size_bytes == 3
-    assert not src.exists()
-    assert storage.download_url(stored.key, "x.mp3", 60) is None
+    assert not src.exists()  # moved, not copied
     served = storage.local_path(stored.key)
     assert served and served.read_bytes() == b"abc"
+    assert served.parent == (tmp_path / "files" / "job1")
     storage.delete(stored.key)
     assert storage.local_path(stored.key) is None
+
+
+def test_the_file_stays_until_something_deletes_it(tmp_path: Path) -> None:
+    """Nothing in the storage layer removes a file on its own."""
+    storage = LocalStorage(tmp_path / "files")
+    stored = storage.store("job1", _make_file(tmp_path))
+    for _ in range(3):
+        assert storage.local_path(stored.key) is not None
+    assert (tmp_path / "files" / "job1" / "Song [abc].mp3").exists()
+
+
+def test_delete_removes_the_whole_job_folder(tmp_path: Path) -> None:
+    storage = LocalStorage(tmp_path / "files")
+    stored = storage.store("job1", _make_file(tmp_path))
+    (tmp_path / "files" / "job1" / "leftover.part").write_bytes(b"x")
+    storage.delete(stored.key)
+    assert not (tmp_path / "files" / "job1").exists()
+    assert (tmp_path / "files").exists()  # the root itself survives
 
 
 def test_local_storage_refuses_path_traversal(tmp_path: Path) -> None:
     storage = LocalStorage(tmp_path / "files")
     (tmp_path / "secret.txt").write_text("nope")
     assert storage.local_path("../secret.txt") is None
+    assert storage.local_path("job1/../../secret.txt") is None
+    assert storage.local_path("") is None
 
 
-@mock_aws
-def test_r2_storage_uploads_signs_and_deletes(tmp_path: Path) -> None:
-    # moto emulates S3; R2 speaks the same API, so this covers the code path.
-    boto3.client("s3", region_name="us-east-1").create_bucket(Bucket="dm-test")
-    storage = R2Storage(
-        bucket="dm-test", access_key_id="testing", secret_access_key="testing", endpoint_url=None
-    )
-    src = _make_file(tmp_path, "Clip [xyz].mp4")
-    stored = storage.store("job9", src)
-    assert stored.key == "job9/Clip [xyz].mp4"
-    assert stored.size_bytes == 3
-    assert not src.exists()  # local copy removed after upload
-
-    url = storage.download_url(stored.key, "Clip [xyz].mp4", 3600)
-    assert url and "job9/Clip" in url
-    qs = parse_qs(urlparse(url).query)
-    assert qs["response-content-disposition"][0].startswith("attachment;")
-    assert qs["X-Amz-Expires"] == ["3600"]
-    assert storage.local_path(stored.key) is None
-
-    s3 = boto3.client("s3", region_name="us-east-1")
-    assert s3.get_object(Bucket="dm-test", Key=stored.key)["Body"].read() == b"abc"
-    storage.delete(stored.key)
-    with pytest.raises(s3.exceptions.NoSuchKey):
-        s3.get_object(Bucket="dm-test", Key=stored.key)
+def test_delete_refuses_to_escape_the_download_folder(tmp_path: Path) -> None:
+    storage = LocalStorage(tmp_path / "files")
+    keep = tmp_path / "elsewhere"
+    keep.mkdir()
+    (keep / "important.txt").write_text("still here")
+    storage.delete("../elsewhere/important.txt")
+    assert (keep / "important.txt").exists()
+    storage.delete("")  # would name the root itself
+    assert (tmp_path / "files").exists()

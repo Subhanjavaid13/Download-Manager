@@ -68,10 +68,17 @@ export default function TermsPage() {
 
       <LegalHeading>Your account and your files</LegalHeading>
       <p>
-        Finished files are deleted from the server one hour after they are ready, and the download
-        link stops working then. Save the file to your device; the app is not storage. The list of
-        what you downloaded stays in your history until you delete your account, which you can do
-        yourself from the Account page.
+        A finished file is kept in a folder on the machine running this app until someone deletes
+        it. Nothing expires on a timer, so nothing disappears from under you - and equally, nothing
+        tidies up after you: every download in your history has a delete button that removes the
+        file and the entry together, and deleting your account removes the lot. The operator may
+        set a retention period on a shared server, in which case the app shows the deadline on the
+        download itself.
+      </p>
+      <p>
+        Disk space, like everything else here, is finite and is the operator&apos;s to manage. They
+        may delete files, refuse new downloads, or change the limits when it runs short. Keep your
+        own copy of anything you care about: this app is a tool, not a backup.
       </p>
 
       <LegalHeading>No warranty, no liability</LegalHeading>

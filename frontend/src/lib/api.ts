@@ -26,7 +26,6 @@ export type Health = {
   auth_enabled: boolean;
   require_auth: boolean;
   signup_enabled: boolean;
-  storage: "local" | "r2";
   database: "sqlite" | "postgresql" | "other";
   /** Result of a live query, not a value cached at startup. */
   database_ok: boolean;
@@ -111,10 +110,12 @@ export type Job = {
   filename: string | null;
   size_bytes: number | null;
   file_available: boolean;
-  /** API path that streams the file, or redirects to storage. */
+  /** API path that streams the file from the server's download folder. */
   file_url: string | null;
-  /** Signed storage link when Cloudflare R2 is active. */
-  direct_url: string | null;
+  /**
+   * When the server will delete the file. Null - the default - means it is
+   * kept until someone deletes it, so do not tell anyone about a deadline.
+   */
   expires_at: string | null;
   error: { code: string; message: string } | null;
   created_at: string;
@@ -274,14 +275,23 @@ export const api = {
     request<Job>("/api/v1/jobs", { method: "POST", body: JSON.stringify(body) }),
   getJob: (id: string) => request<Job>(`/api/v1/jobs/${id}`),
   listJobs: (limit = 10) => request<Job[]>(`/api/v1/jobs?limit=${limit}`),
-  cancelJob: (id: string) => request<void>(`/api/v1/jobs/${id}`, { method: "DELETE" }),
+  /** Stop a download that is still running. The row stays in history. */
+  cancelJob: (id: string) =>
+    request<void>(`/api/v1/jobs/${id}/cancel`, { method: "POST" }),
+  /** Throw a finished download away: the file on the server and the history row. */
+  deleteJob: (id: string) => request<void>(`/api/v1/jobs/${id}`, { method: "DELETE" }),
   fileUrl: (id: string) => `${API_URL}/api/v1/jobs/${id}/file`,
 
   // Playlists. Every video becomes an ordinary job, so the item files come from
-  // fileUrl() above and one item can be cancelled with cancelJob().
+  // fileUrl() above and one item can be cancelled with cancelJob(). Deleting is
+  // all-or-nothing: deletePlaylist() takes the whole run away, because the
+  // counts on the playlist would otherwise describe rows that had gone.
   createPlaylist: (body: JobCreate) =>
     request<Playlist>("/api/v1/playlists", { method: "POST", body: JSON.stringify(body) }),
   getPlaylist: (id: string) => request<Playlist>(`/api/v1/playlists/${id}`),
   listPlaylists: (limit = 20) => request<Playlist[]>(`/api/v1/playlists?limit=${limit}`),
-  cancelPlaylist: (id: string) => request<void>(`/api/v1/playlists/${id}`, { method: "DELETE" }),
+  cancelPlaylist: (id: string) =>
+    request<void>(`/api/v1/playlists/${id}/cancel`, { method: "POST" }),
+  deletePlaylist: (id: string) =>
+    request<void>(`/api/v1/playlists/${id}`, { method: "DELETE" }),
 };

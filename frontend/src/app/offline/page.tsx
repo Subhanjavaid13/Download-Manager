@@ -48,7 +48,7 @@ export default function OfflinePage() {
           <ul className="mt-4 space-y-1.5 text-sm text-muted">
             <li>Check Wi-Fi or mobile data, or turn off airplane mode.</li>
             <li>A download that was running keeps going on the server.</li>
-            <li>Files are removed one hour after they finish, so save them soon.</li>
+            <li>Nothing is deleted while you are away. Your finished files are still there.</li>
           </ul>
 
           <div className="mt-5 flex flex-wrap items-center gap-3">

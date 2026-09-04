@@ -8,7 +8,7 @@
 #   `sync: false` variables alone, so nothing here can overwrite a secret.
 #
 # Nothing in this file is a secret. Values the API needs but must never be
-# committed (database URL, R2 keys, Supabase anon key) are declared by name only.
+# committed (database URL, Supabase anon key) are declared by name only.
 #
 # The frontend is NOT here. It lives on Vercel; see docs/DEPLOYMENT.md.
 
@@ -77,17 +77,24 @@ services:
       - key: DM_DATABASE_URL
         sync: false
 
-      # --- file delivery (Cloudflare R2) --------------------------------------
-      - key: DM_STORAGE
-        value: r2
-      - key: DM_R2_BUCKET
-        value: downloader-manager-files # must match the bucket you create
-      - key: DM_R2_ACCOUNT_ID
-        sync: false
-      - key: DM_R2_ACCESS_KEY_ID
-        sync: false
-      - key: DM_R2_SECRET_ACCESS_KEY
-        sync: false
+      # --- files --------------------------------------------------------------
+      # Finished files are written to the container's own disk and the API
+      # streams them to the browser. That disk is ephemeral on Render: it is
+      # wiped by every deploy and by the free plan's 15-minute spin-down, so a
+      # file here is short-lived whatever this file says. The retention below
+      # is what keeps a busy hour from filling it before that happens.
+      #
+      # The tradeoff we are accepting: every byte a user downloads is paid for
+      # twice by this service, once pulling from YouTube and once pushing to the
+      # browser, against Render's 100 GB/month egress. See docs/DEPLOYMENT.md.
+      # DM_DOWNLOAD_DIR is not set here: the image already points it at
+      # /data/downloads, the one writable path in the container.
+      #
+      # Minutes to keep a finished file. 0 would mean forever, which is the
+      # right default on your own machine and the wrong one on a 512 MB
+      # container with a shared disk. Two hours is long enough to save a file.
+      - key: DM_FILE_RETENTION_MINUTES
+        value: "120"
 
       # --- auth ---------------------------------------------------------------
       - key: DM_SUPABASE_URL
@@ -118,8 +125,6 @@ services:
         value: "300"
       - key: DM_MAX_DURATION_SEC
         value: "10800" # 3 hours
-      - key: DM_JOB_TTL_MINUTES
-        value: "60" # matches the R2 lifecycle rule
       - key: DM_RATE_LIMIT_INFO
         value: 30/minute
       - key: DM_RATE_LIMIT_JOBS
@@ -127,5 +132,4 @@ services:
 
       # Not declared here on purpose, add in the dashboard only if you use them:
       #   DM_TURNSTILE_SECRET    Cloudflare Turnstile secret for the sign-up CAPTCHA
-      #   DM_R2_ENDPOINT_URL     only when the endpoint is not <account>.r2.cloudflarestorage.com
       #   DM_SUPABASE_JWT_SECRET only for legacy HS256 Supabase projects

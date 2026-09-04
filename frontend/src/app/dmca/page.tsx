@@ -22,11 +22,12 @@ export default function DmcaPage() {
 
       <LegalHeading>What this app does with content</LegalHeading>
       <p>
-        Nothing is uploaded here and nothing is hosted here in any lasting sense. When someone pastes
-        a link, the server fetches that video from YouTube, converts it, and hands the file to the
-        person who asked. The file is deleted one hour later. There is no library, no search, no
-        public index, no sharing between users, and no way to browse what anyone else downloaded.
-        The app cannot make private content public: it can only reach what YouTube already serves.
+        Nothing is uploaded here and nothing is published here. When someone pastes a link, the
+        server fetches that video from YouTube, converts it, and hands the file to the person who
+        asked. A copy stays in a private folder on that machine, reachable only by the person who
+        downloaded it, until they delete it. There is no library, no search, no public index, no
+        sharing between users, and no way to browse what anyone else downloaded. The app cannot
+        make private content public: it can only reach what YouTube already serves.
       </p>
       <p>
         So the usual takedown target does not exist: there is no page to remove. What the operator

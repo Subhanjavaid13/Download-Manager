@@ -105,6 +105,9 @@ def test_a_stranger_sees_nothing(client: TestClient) -> None:
     created = client.post("/api/v1/playlists", json={"url": PLAYLIST_URL}, headers=CLIENT).json()
     other = {"X-Client-Id": "browser-someoneelse"}
     assert client.get(f"/api/v1/playlists/{created['id']}", headers=other).status_code == 404
+    assert (
+        client.post(f"/api/v1/playlists/{created['id']}/cancel", headers=other).status_code == 404
+    )
     assert client.delete(f"/api/v1/playlists/{created['id']}", headers=other).status_code == 404
     assert client.get("/api/v1/playlists", headers=other).json() == []
     _wait_done(client, created["id"])
@@ -118,7 +121,9 @@ def test_cancel_a_running_playlist(client: TestClient) -> None:
 
     app.state.jobs._downloader = Slow()
     created = client.post("/api/v1/playlists", json={"url": PLAYLIST_URL}, headers=CLIENT).json()
-    assert client.delete(f"/api/v1/playlists/{created['id']}", headers=CLIENT).status_code == 204
+    assert (
+        client.post(f"/api/v1/playlists/{created['id']}/cancel", headers=CLIENT).status_code == 204
+    )
     ended = _wait_done(client, created["id"])
     assert ended["status"] == "cancelled"
     assert ended["completed_items"] < 2
@@ -176,3 +181,43 @@ def test_info_previews_a_playlist(client: TestClient) -> None:
     assert body["duration_sec"] == 300  # the two items added up
     assert [i["title"] for i in body["items"]] == ["First", "Second"]
     assert body["available_heights"] == []
+
+
+def test_delete_a_finished_playlist_removes_its_files_and_all_its_rows(
+    client: TestClient,
+) -> None:
+    created = client.post("/api/v1/playlists", json={"url": PLAYLIST_URL}, headers=CLIENT).json()
+    done = _wait_done(client, created["id"])
+    item_ids = [i["id"] for i in done["items"]]
+
+    assert client.delete(f"/api/v1/playlists/{created['id']}", headers=CLIENT).status_code == 204
+    assert client.get(f"/api/v1/playlists/{created['id']}", headers=CLIENT).status_code == 404
+    listed = client.get("/api/v1/playlists", headers=CLIENT).json()
+    assert created["id"] not in [p["id"] for p in listed]
+    for item_id in item_ids:
+        assert client.get(f"/api/v1/jobs/{item_id}/file", headers=CLIENT).status_code == 404
+
+
+def test_deleting_a_playlist_that_is_still_running_is_refused(client: TestClient) -> None:
+    class Slow(StubDownloader):
+        def download(self, *a, **k):
+            time.sleep(0.5)
+            return super().download(*a, **k)
+
+    app.state.jobs._downloader = Slow()
+    created = client.post("/api/v1/playlists", json={"url": PLAYLIST_URL}, headers=CLIENT).json()
+    conflict = client.delete(f"/api/v1/playlists/{created['id']}", headers=CLIENT)
+    assert conflict.status_code == 409
+    assert "Stop it first" in conflict.json()["detail"]
+
+    client.post(f"/api/v1/playlists/{created['id']}/cancel", headers=CLIENT)
+    _wait_done(client, created["id"])
+    assert client.delete(f"/api/v1/playlists/{created['id']}", headers=CLIENT).status_code == 204
+
+
+def test_one_video_of_a_playlist_cannot_be_deleted_on_its_own(client: TestClient) -> None:
+    created = client.post("/api/v1/playlists", json={"url": PLAYLIST_URL}, headers=CLIENT).json()
+    done = _wait_done(client, created["id"])
+    r = client.delete(f"/api/v1/jobs/{done['items'][0]['id']}", headers=CLIENT)
+    assert r.status_code == 409
+    assert "Delete the whole playlist" in r.json()["detail"]

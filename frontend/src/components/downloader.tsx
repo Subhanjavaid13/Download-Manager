@@ -683,7 +683,7 @@ function DownloadScreen({ shared }: { shared: SharedLink | null }) {
             <EmptyState
               icon={<DownloadIcon />}
               title="No downloads yet"
-              body="Finished files show up here for an hour, so you can save them again without waiting."
+              body="Finished files stay here, so you can save them again without waiting."
             />
           ) : (
             <>
@@ -985,7 +985,7 @@ function RecentRow({ job }: { job: Job }) {
           {job.status === "done"
             ? job.file_available
               ? formatBytes(job.size_bytes)
-              : "link expired"
+              : "file removed"
             : (STAGE_LABEL[job.status] ?? job.status).toLowerCase()}
         </p>
       </div>
@@ -1175,9 +1175,19 @@ function JobCard({
               Download another
             </button>
           </div>
-          {job.expires_at && (
+          {job.expires_at ? (
+            // Only when this server is configured to delete finished files. With
+            // the default settings there is no deadline, so we do not invent one.
             <p className="mt-2 text-xs text-muted">
-              The link works until {formatClock(job.expires_at)}. After that, download it again.
+              This server deletes the file at {formatClock(job.expires_at)}. Save it before then.
+            </p>
+          ) : (
+            <p className="mt-2 text-xs text-muted">
+              It is in the download folder as well, and stays there until you delete it from{" "}
+              <Link href="/history" className="underline underline-offset-2 hover:text-ink-2">
+                History
+              </Link>
+              .
             </p>
           )}
         </div>

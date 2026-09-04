@@ -2,8 +2,13 @@
 
 A job is one download request stored as a `downloads` row. Jobs run on a small
 thread pool in this process, write progress to the database (throttled), can be
-cancelled, survive an API restart as history, and have their files removed after
-a TTL by a janitor thread.
+cancelled, and survive an API restart as history.
+
+Finished files are kept on disk indefinitely, because they belong to whoever
+runs this server. A deployment that cannot afford that can set
+`DM_FILE_RETENTION_MINUTES`, and a janitor thread then deletes files that old
+and leaves the history row behind. Either way the owner can delete a download
+themselves, which removes the file and the row together.
 
 A playlist is a `playlists` row plus one `downloads` row per video. It takes a
 single worker slot and runs its items one after another, so a playlist never
@@ -43,7 +48,7 @@ from app.models import (
     Playlist,
     utcnow,
 )
-from app.storage import Storage
+from app.storage import LocalStorage
 
 log = logging.getLogger(__name__)
 
@@ -63,13 +68,8 @@ class Owner:
         return True  # legacy row with no owner: the id is unguessable
 
 
-def job_to_dict(job: Download, storage: Storage, ttl_sec: int) -> dict:
+def job_to_dict(job: Download) -> dict:
     available = job.file_available()
-    direct = (
-        storage.download_url(job.storage_key, job.filename or "download", ttl_sec)
-        if available and job.storage_key
-        else None
-    )
     return {
         "id": str(job.id),
         "user_id": str(job.user_id) if job.user_id else None,
@@ -97,7 +97,7 @@ def job_to_dict(job: Download, storage: Storage, ttl_sec: int) -> dict:
         "size_bytes": job.size_bytes,
         "file_available": available,
         "file_url": f"/api/v1/jobs/{job.id}/file" if available else None,
-        "direct_url": direct,
+        # Null unless a retention period is configured: no deadline is the default.
         "expires_at": _iso(job.expires_at) if available else None,
         "error": (
             {"code": job.error_code, "message": job.error_message} if job.error_code else None
@@ -149,11 +149,11 @@ class JobStore:
         self,
         *,
         downloader: Downloader,
-        storage: Storage,
+        storage: LocalStorage,
         session_factory: sessionmaker[Session],
         work_dir: Path,
         concurrency: int = 2,
-        ttl_minutes: int = 60,
+        retention_minutes: int = 0,
         sweep_interval_sec: float = 60.0,
         on_finish: Callable[[dict], None] | None = None,
         on_playlist_finish: Callable[[dict], None] | None = None,
@@ -164,15 +164,19 @@ class JobStore:
         self._storage = storage
         self._sessions = session_factory
         self._work_dir = work_dir
-        self._ttl = timedelta(minutes=ttl_minutes)
+        # 0 means keep finished files forever, which is the default: nothing
+        # expires, so there is nothing for the janitor to do and it never starts.
+        self._retention = timedelta(minutes=retention_minutes) if retention_minutes > 0 else None
         self._cancel_events: dict[str, threading.Event] = {}
         self._lock = threading.Lock()
         self._pool = ThreadPoolExecutor(max_workers=concurrency, thread_name_prefix="dl")
         self._stop = threading.Event()
-        self._janitor = threading.Thread(
-            target=self._sweep_loop, args=(sweep_interval_sec,), daemon=True, name="janitor"
-        )
-        self._janitor.start()
+        self._janitor: threading.Thread | None = None
+        if self._retention is not None:
+            self._janitor = threading.Thread(
+                target=self._sweep_loop, args=(sweep_interval_sec,), daemon=True, name="janitor"
+            )
+            self._janitor.start()
 
     # -- public API -----------------------------------------------------------
 
@@ -404,7 +408,12 @@ class JobStore:
         return len(requeue) + len(requeue_playlists)
 
     def sweep(self) -> int:
-        """Delete files whose TTL passed. Rows stay as history. Returns files removed."""
+        """Delete files whose retention period passed. Rows stay as history.
+
+        A row with no `expires_at` is never swept, so with the default settings
+        this finds nothing and only matters to a server that sets a retention
+        period (or that used to, and still has dated rows). Returns files removed.
+        """
         now = utcnow()
         removed = 0
         with session_scope(self._sessions) as s:
@@ -418,6 +427,41 @@ class JobStore:
         if removed:
             log.info("sweep removed %d expired files", removed)
         return removed
+
+    def delete(self, job_id: str, owner: Owner) -> bool:
+        """Remove one finished download: the file first, then the history row.
+
+        False when the caller does not own it, when it is still running (cancel
+        it first), or when it is one video of a playlist, whose rows are only
+        removed together so the playlist's counts stay true.
+        """
+        with session_scope(self._sessions) as s:
+            job = self._load(s, job_id)
+            if job is None or not owner.owns(job) or job.is_active or job.playlist_job_id:
+                return False
+            key = job.storage_key
+            s.delete(job)
+        if key:
+            self.delete_stored(key)
+        shutil.rmtree(self._work_dir / job_id, ignore_errors=True)
+        return True
+
+    def delete_playlist(self, playlist_id: str, owner: Owner) -> bool:
+        """Remove a whole playlist run: every video's file, every row, the parent."""
+        with session_scope(self._sessions) as s:
+            pl = self._load_playlist(s, playlist_id)
+            if pl is None or not owner.owns(pl) or pl.is_active:
+                return False
+            items = list(s.scalars(select(Download).where(Download.playlist_job_id == pl.id)))
+            keys = [(str(i.id), i.storage_key) for i in items]
+            for item in items:
+                s.delete(item)
+            s.delete(pl)
+        for item_id, key in keys:
+            if key:
+                self.delete_stored(key)
+            shutil.rmtree(self._work_dir / item_id, ignore_errors=True)
+        return True
 
     def delete_stored(self, key: str) -> None:
         """Remove one stored file (used when an account is deleted)."""
@@ -554,7 +598,7 @@ class JobStore:
                 job.filename = path.name
                 job.size_bytes = stored.size_bytes
                 job.storage_key = stored.key
-                job.expires_at = utcnow() + self._ttl
+                job.expires_at = utcnow() + self._retention if self._retention else None
                 job.percent = 100.0
                 job.detail = None
                 self._finish(job, "done")
@@ -708,8 +752,9 @@ class JobStore:
             return None
         return s.get(Playlist, key)
 
-    def _snapshot(self, job: Download) -> dict:
-        return job_to_dict(job, self._storage, int(self._ttl.total_seconds()))
+    @staticmethod
+    def _snapshot(job: Download) -> dict:
+        return job_to_dict(job)
 
     def _playlist_snapshot(self, s: Session, pl: Playlist, *, with_items: bool) -> dict:
         items = None

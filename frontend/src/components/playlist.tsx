@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-import { AudioIcon, CheckIcon, VideoIcon } from "@/components/icons";
+import { AudioIcon, CheckIcon, TrashIcon, VideoIcon } from "@/components/icons";
 import { Notice, Skeleton } from "@/components/ui";
 import { api, type Info, type Job, type Playlist, type PlaylistStatus } from "@/lib/api";
 import { formatBytes, formatDuration, formatEta } from "@/lib/format";
@@ -327,7 +327,7 @@ export function PlaylistItemRow({ job, index }: { job: Job; index: number }) {
             ) : job.status === "done" ? (
               <>
                 <span className={`font-medium ${tone}`}>{job.label}</span>
-                {job.file_available ? ` · ${formatBytes(job.size_bytes)}` : " · link expired"}
+                {job.file_available ? ` · ${formatBytes(job.size_bytes)}` : " · file removed"}
               </>
             ) : (
               (STAGE_LABEL[job.status] ?? job.status)
@@ -367,11 +367,39 @@ export function PlaylistItemRow({ job, index }: { job: Job; index: number }) {
 /* ------------------------------------------------------------------ history */
 
 /** A playlist in the history list, expandable to the videos inside it. */
-export function PlaylistHistoryRow({ playlist }: { playlist: Playlist }) {
+export function PlaylistHistoryRow({
+  playlist,
+  onRemoved,
+}: {
+  playlist: Playlist;
+  onRemoved?: (id: string) => void;
+}) {
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<Job[] | null>(playlist.items);
   const [loading, setLoading] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
   const state = PLAYLIST_STATUS[playlist.status];
+  const finished = !PLAYLIST_ACTIVE.has(playlist.status);
+
+  // A playlist is deleted whole: its videos are rows of their own, and removing
+  // one of them would leave the "3 of 5 done" on this line describing nothing.
+  const remove = async () => {
+    const name = playlist.title ?? playlist.playlist_id;
+    const question =
+      `Delete the playlist "${name}"? All ${playlist.total_items} files are deleted from ` +
+      `the download folder, and the whole run goes from your history. This cannot be undone.`;
+    if (!window.confirm(question)) return;
+    setBusy(true);
+    setFailed(false);
+    try {
+      await api.deletePlaylist(playlist.id);
+      onRemoved?.(playlist.id);
+    } catch {
+      setBusy(false);
+      setFailed(true);
+    }
+  };
 
   const toggle = async () => {
     const next = !open;
@@ -390,71 +418,90 @@ export function PlaylistHistoryRow({ playlist }: { playlist: Playlist }) {
 
   return (
     <li className="bg-surface">
-      <button
-        type="button"
-        onClick={toggle}
-        aria-expanded={open}
-        className="tap flex w-full items-center gap-3 px-3 py-3 text-left transition-ui hover:bg-surface-2"
-      >
-        <span className="relative shrink-0">
-          {playlist.thumbnail ? (
-            // eslint-disable-next-line @next/next/no-img-element -- remote thumbnail, unoptimized on purpose
-            <img
-              src={playlist.thumbnail}
-              alt=""
-              width={64}
-              height={40}
-              loading="lazy"
-              decoding="async"
-              className="h-10 w-16 rounded bg-surface-2 object-cover"
-            />
-          ) : (
-            <span className="flex h-10 w-16 items-center justify-center rounded bg-surface-2 text-muted">
-              {playlist.mode === "audio" ? (
-                <AudioIcon className="h-4 w-4" />
-              ) : (
-                <VideoIcon className="h-4 w-4" />
-              )}
-            </span>
-          )}
-          <span className="absolute bottom-0.5 right-0.5 rounded bg-ink/80 px-1 font-mono text-[10px] font-medium text-bg">
-            {playlist.total_items}
-          </span>
-        </span>
-        {/* The title gets the whole line: on a 390px phone a chip beside it
-            leaves room for about three words. */}
-        <span className="min-w-0 flex-1">
-          <span className="block truncate text-sm font-medium">
-            {playlist.title ?? playlist.playlist_id}
-          </span>
-          <span className="mt-0.5 flex items-center gap-1.5 truncate text-xs text-muted">
-            <span className="shrink-0 rounded bg-accent-soft px-1.5 py-0.5 text-[10px] font-semibold uppercase text-accent">
-              Playlist
-            </span>
-            <span className="truncate">
-              {playlist.completed_items} of {playlist.total_items} saved
-              {playlist.failed_items > 0 && ` · ${playlist.failed_items} failed`}
-            </span>
-          </span>
-        </span>
-        <span
-          className={`shrink-0 rounded-md px-2 py-1 font-mono text-label uppercase ${state.tone}`}
+      <div className="flex items-center">
+        <button
+          type="button"
+          onClick={toggle}
+          aria-expanded={open}
+          className="tap flex min-w-0 flex-1 items-center gap-3 px-3 py-3 text-left transition-ui hover:bg-surface-2"
         >
-          {state.label}
-        </span>
-        <svg
-          aria-hidden
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          className={`h-4 w-4 shrink-0 text-muted transition-ui ${open ? "rotate-180" : ""}`}
-        >
-          <path d="m6 9 6 6 6-6" />
-        </svg>
-      </button>
+          <span className="relative shrink-0">
+            {playlist.thumbnail ? (
+              // eslint-disable-next-line @next/next/no-img-element -- remote thumbnail, unoptimized on purpose
+              <img
+                src={playlist.thumbnail}
+                alt=""
+                width={64}
+                height={40}
+                loading="lazy"
+                decoding="async"
+                className="h-10 w-16 rounded bg-surface-2 object-cover"
+              />
+            ) : (
+              <span className="flex h-10 w-16 items-center justify-center rounded bg-surface-2 text-muted">
+                {playlist.mode === "audio" ? (
+                  <AudioIcon className="h-4 w-4" />
+                ) : (
+                  <VideoIcon className="h-4 w-4" />
+                )}
+              </span>
+            )}
+            <span className="absolute bottom-0.5 right-0.5 rounded bg-ink/80 px-1 font-mono text-[10px] font-medium text-bg">
+              {playlist.total_items}
+            </span>
+          </span>
+          {/* The title gets the whole line: on a 390px phone a chip beside it
+              leaves room for about three words. */}
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-sm font-medium">
+              {playlist.title ?? playlist.playlist_id}
+            </span>
+            <span className="mt-0.5 flex items-center gap-1.5 truncate text-xs text-muted">
+              <span className="shrink-0 rounded bg-accent-soft px-1.5 py-0.5 text-[10px] font-semibold uppercase text-accent">
+                Playlist
+              </span>
+              <span className="truncate">
+                {failed ? (
+                  <span className="text-danger">Could not delete it. Try again.</span>
+                ) : (
+                  <>
+                    {playlist.completed_items} of {playlist.total_items} saved
+                    {playlist.failed_items > 0 && ` · ${playlist.failed_items} failed`}
+                  </>
+                )}
+              </span>
+            </span>
+          </span>
+          <span
+            className={`shrink-0 rounded-md px-2 py-1 font-mono text-label uppercase ${state.tone}`}
+          >
+            {state.label}
+          </span>
+          <svg
+            aria-hidden
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={`h-4 w-4 shrink-0 text-muted transition-ui ${open ? "rotate-180" : ""}`}
+          >
+            <path d="m6 9 6 6 6-6" />
+          </svg>
+        </button>
+        {finished && (
+          <button
+            type="button"
+            onClick={remove}
+            disabled={busy}
+            aria-label={`Delete the playlist ${playlist.title ?? playlist.playlist_id}`}
+            className="tap mr-3 flex shrink-0 items-center justify-center rounded-control border border-line px-2 text-muted transition-ui hover:border-danger hover:bg-danger-soft hover:text-danger disabled:opacity-45"
+          >
+            <TrashIcon className="h-4 w-4" />
+          </button>
+        )}
+      </div>
 
       {open && (
         <div className="border-t border-line-soft px-3 py-2">

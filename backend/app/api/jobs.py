@@ -1,8 +1,13 @@
-"""Jobs: create a download, poll its progress, fetch the file, cancel it, list history."""
+"""Jobs: create a download, poll its progress, fetch the file, cancel it, list history.
+
+Two verbs look similar and are not the same thing. `POST /{id}/cancel` stops a
+download that is still running and leaves the cancelled row in history.
+`DELETE /{id}` throws a finished download away: the file on disk and the row.
+"""
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse
 
 from app.api.guards import enforce_not_banned, enforce_quota
 from app.auth import User, get_current_user
@@ -21,12 +26,17 @@ from app.deps import (
     limiter,
 )
 from app.jobs.store import JobStore, Owner
+from app.models import ACTIVE_STATUSES
 from app.schemas import JobCreate, JobResponse
 from app.services.accounts import Accounts
 from app.services.bans import Bans
 from app.storage import content_disposition
 
 router = APIRouter(prefix="/api/v1/jobs", tags=["jobs"])
+
+# A finished job whose file is not there any more: deleted by its owner, or
+# swept because this server sets DM_FILE_RETENTION_MINUTES.
+GONE = "That file is no longer on the server. Download it again."
 
 
 def _get_or_404(store: JobStore, job_id: str, owner: Owner) -> dict:
@@ -126,16 +136,12 @@ async def get_file(
     job = _get_or_404(store, job_id, owner)
     if not job["file_available"]:
         if job["status"] == "done":
-            raise HTTPException(status.HTTP_410_GONE, "This file has expired. Download it again.")
+            raise HTTPException(status.HTTP_410_GONE, GONE)
         raise HTTPException(status.HTTP_409_CONFLICT, "The file is not ready yet.")
-
-    if job["direct_url"]:
-        # R2: hand the browser a signed link; bytes never pass through this server.
-        return RedirectResponse(job["direct_url"], status_code=status.HTTP_307_TEMPORARY_REDIRECT)
 
     local = store.local_file(job_id, owner)
     if local is None:
-        raise HTTPException(status.HTTP_410_GONE, "This file has expired. Download it again.")
+        raise HTTPException(status.HTTP_410_GONE, GONE)
     path, filename = local
     return FileResponse(
         path,
@@ -144,11 +150,33 @@ async def get_file(
     )
 
 
-@router.delete("/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.post("/{job_id}/cancel", status_code=status.HTTP_204_NO_CONTENT)
 async def cancel_job(
     job_id: str,
     owner: Owner = Depends(get_owner),
     store: JobStore = Depends(get_job_store),
 ) -> None:
+    """Stop a running download. The row stays in history, marked cancelled."""
     _get_or_404(store, job_id, owner)
     store.cancel(job_id, owner)
+
+
+@router.delete("/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_job(
+    job_id: str,
+    owner: Owner = Depends(get_owner),
+    store: JobStore = Depends(get_job_store),
+) -> None:
+    """Delete a finished download: the file on disk and the history row."""
+    job = _get_or_404(store, job_id, owner)
+    if job["status"] in ACTIVE_STATUSES:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "This download is still running. Cancel it first, then delete it.",
+        )
+    if job["playlist_job_id"]:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "This video came from a playlist. Delete the whole playlist to remove it.",
+        )
+    store.delete(job_id, owner)

@@ -208,8 +208,8 @@ function Account() {
         <Card className="mt-4">
           <h2 className="text-sm font-semibold">Delete account</h2>
           <p className="mt-1 text-sm text-muted">
-            Removes your account, download history, and any files still on the server. There is no
-            undo.
+            Removes your account, your download history, and every file those downloads left in
+            the download folder. There is no undo.
           </p>
           <Button
             type="button"

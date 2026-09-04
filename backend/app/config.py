@@ -7,7 +7,6 @@ Locally, put them in `backend/.env` (see `.env.example`).
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -22,14 +21,19 @@ class Settings(BaseSettings):
     # Frontend origins allowed to call this API.
     cors_origins: list[str] = ["http://localhost:3000"]
 
-    # Where files are written while a job runs (and kept, with local storage).
+    # Where finished files are kept. Point it at a real folder you can open,
+    # for example C:/Users/you/Music or /home/you/Music. See .env.example.
     download_dir: Path = Path("./downloads")
 
     # Abuse and cost controls (free tiers are small; keep these tight).
     max_duration_sec: int = 3 * 60 * 60  # refuse videos longer than 3 hours
     max_file_mb: int = 500  # a download is aborted as soon as it passes this
     max_playlist_items: int = 50  # largest playlist accepted in one request
-    job_ttl_minutes: int = 60  # finished files are deleted after this
+    # How long a finished file is kept before the janitor deletes it.
+    # 0 (the default) keeps it forever: the file is yours. Set a number of
+    # minutes only on a shared server, where a disk that never empties is a
+    # real problem, and tell your users about it.
+    file_retention_minutes: int = 0
     worker_concurrency: int = 2
     rate_limit_info: str = "30/minute"
     rate_limit_jobs: str = "10/minute"
@@ -45,16 +49,6 @@ class Settings(BaseSettings):
     # Database. SQLite locally, Supabase Postgres in production
     # (use the "Transaction pooler" URI, port 6543, with the postgresql+psycopg driver).
     database_url: str = "sqlite:///./dm.db"
-
-    # File storage for finished downloads.
-    #   local: files stay in download_dir and the API streams them.
-    #   r2:    files are uploaded to Cloudflare R2 and served by a signed link (zero egress).
-    storage: Literal["local", "r2"] = "local"
-    r2_account_id: str | None = None
-    r2_access_key_id: str | None = None
-    r2_secret_access_key: str | None = None
-    r2_bucket: str | None = None
-    r2_endpoint_url: str | None = None  # defaults to https://<account_id>.r2.cloudflarestorage.com
 
     # Auth (Phase 2). Leave supabase_url empty to run the API without authentication.
     require_auth: bool = False  # true: every download needs a signed-in, verified user

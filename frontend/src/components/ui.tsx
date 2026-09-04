@@ -170,8 +170,8 @@ export function SiteFooter({ className = "" }: { className?: string }) {
   return (
     <footer className={`text-xs leading-relaxed text-muted ${className}`}>
       <p>
-        For personal use with content you have the right to download. Files are deleted from the
-        server one hour after they finish.
+        For personal use with content you have the right to download. Files are kept in the
+        download folder until you delete them.
       </p>
       <p className="mt-2 flex flex-wrap items-center gap-x-1 gap-y-1">
         {links.map((l, i) => (

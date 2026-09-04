@@ -145,3 +145,14 @@ export function InboxIcon(p: IconProps) {
     </Svg>
   );
 }
+
+export function TrashIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M4.5 6.5h15" />
+      <path d="M9.5 6.5V5a1.5 1.5 0 0 1 1.5-1.5h2A1.5 1.5 0 0 1 14.5 5v1.5" />
+      <path d="M6.5 6.5 7.3 19a1.5 1.5 0 0 0 1.5 1.4h6.4a1.5 1.5 0 0 0 1.5-1.4l.8-12.5" />
+      <path d="M10.5 10v6.5M13.5 10v6.5" />
+    </Svg>
+  );
+}

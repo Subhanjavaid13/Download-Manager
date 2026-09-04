@@ -111,7 +111,7 @@ def to_friendly(exc: BaseException) -> FriendlyError:
 
 
 def _is_infrastructure_error(exc: BaseException) -> bool:
-    """True when the fault is in something we run: the database, or object storage."""
+    """True when the fault is in something we run rather than something we call."""
     from sqlalchemy.exc import SQLAlchemyError
 
     seen: set[int] = set()
@@ -120,7 +120,7 @@ def _is_infrastructure_error(exc: BaseException) -> bool:
         seen.add(id(current))
         if isinstance(current, SQLAlchemyError):
             return True
-        if type(current).__module__.split(".")[0] in ("botocore", "boto3", "psycopg"):
+        if type(current).__module__.split(".")[0] == "psycopg":
             return True
         current = current.__cause__ or current.__context__
     return False

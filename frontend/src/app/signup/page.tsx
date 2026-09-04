@@ -197,8 +197,8 @@ export default function SignUpPage() {
             </Link>
           </p>
           <p className="mt-4 text-xs leading-relaxed text-muted">
-            For personal use with content you have the right to download. Files are deleted one hour
-            after they finish.
+            For personal use with content you have the right to download. Your files are kept
+            until you delete them.
           </p>
         </Card>
       </Page>

@@ -2,7 +2,10 @@
 
 The items themselves are ordinary jobs, so their files come from the existing
 `GET /api/v1/jobs/{item_id}/file` and a single item can be cancelled with
-`DELETE /api/v1/jobs/{item_id}` without stopping the rest of the playlist.
+`POST /api/v1/jobs/{item_id}/cancel` without stopping the rest of the playlist.
+Deleting, though, is all-or-nothing here: `DELETE /api/v1/playlists/{id}` takes
+the whole run away, so the counts on the parent row never describe rows that
+have gone.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -25,6 +28,7 @@ from app.deps import (
     limiter,
 )
 from app.jobs.store import JobStore, Owner
+from app.models import PLAYLIST_ACTIVE_STATUSES
 from app.schemas import PlaylistCreate, PlaylistResponse
 from app.services.accounts import Accounts
 from app.services.bans import Bans
@@ -141,7 +145,7 @@ async def get_playlist(
     return PlaylistResponse(**_get_or_404(store, playlist_id, owner))
 
 
-@router.delete("/{playlist_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.post("/{playlist_id}/cancel", status_code=status.HTTP_204_NO_CONTENT)
 async def cancel_playlist(
     playlist_id: str,
     owner: Owner = Depends(get_owner),
@@ -149,10 +153,26 @@ async def cancel_playlist(
 ) -> None:
     """Stop the run: the video downloading now and everything still waiting.
 
-    Files that already finished stay available until they expire.
+    The videos that already finished are kept, and stay in history.
     """
     _get_or_404(store, playlist_id, owner)
     store.cancel_playlist(playlist_id, owner)
+
+
+@router.delete("/{playlist_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_playlist(
+    playlist_id: str,
+    owner: Owner = Depends(get_owner),
+    store: JobStore = Depends(get_job_store),
+) -> None:
+    """Delete a finished playlist: every video's file, and every row including this one."""
+    playlist = _get_or_404(store, playlist_id, owner)
+    if playlist["status"] in PLAYLIST_ACTIVE_STATUSES:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "This playlist is still running. Stop it first, then delete it.",
+        )
+    store.delete_playlist(playlist_id, owner)
 
 
 def _get_or_404(store: JobStore, playlist_id: str, owner: Owner) -> dict:
