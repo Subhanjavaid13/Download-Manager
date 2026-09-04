@@ -19,6 +19,15 @@ class HealthResponse(BaseModel):
     database_ok: bool
 
 
+class PlaylistItemPreview(BaseModel):
+    """One video listed in a playlist preview, before anything is downloaded."""
+
+    id: str
+    title: str
+    duration_sec: int | None = None
+    thumbnail: str | None = None
+
+
 class InfoResponse(BaseModel):
     id: str
     title: str
@@ -31,6 +40,12 @@ class InfoResponse(BaseModel):
     has_audio: bool
     kind: Literal["video", "playlist"]
     playlist_id: str | None
+    # Playlist previews only. `playlist_truncated` means the playlist holds more
+    # videos than DM_MAX_PLAYLIST_ITEMS, so a download would be refused.
+    playlist_count: int | None = None
+    playlist_truncated: bool = False
+    playlist_limit: int | None = None
+    items: list[PlaylistItemPreview] | None = None
 
 
 class JobCreate(BaseModel):
@@ -79,3 +94,34 @@ class JobResponse(BaseModel):
     error: ErrorOut | None
     created_at: str
     finished_at: str | None
+    playlist_job_id: str | None = Field(None, description="Parent playlist, when this is an item")
+    playlist_index: int | None = None
+
+
+class PlaylistCreate(JobCreate):
+    """Same options as a single download; the URL must carry a `list=` id."""
+
+
+class PlaylistResponse(BaseModel):
+    id: str
+    playlist_id: str
+    url: str
+    title: str | None
+    channel: str | None
+    thumbnail: str | None
+    mode: str
+    format: str
+    quality: str | None
+    label: str
+    status: str  # queued | running | done | partial | error | cancelled
+    total_items: int
+    completed_items: int
+    failed_items: int
+    cancelled_items: int
+    percent: float
+    error: ErrorOut | None
+    created_at: str
+    finished_at: str | None
+    items: list[JobResponse] | None = Field(
+        None, description="The videos, in order. Null in list views: fetch the playlist by id."
+    )

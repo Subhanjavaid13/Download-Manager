@@ -4,12 +4,15 @@ SQLite in development (one file, zero setup), Postgres in production.
 The same models and queries run on both.
 """
 
+import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
 
 from sqlalchemy import create_engine, event, inspect
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+
+log = logging.getLogger(__name__)
 
 
 class Base(DeclarativeBase):
@@ -74,11 +77,21 @@ def init_db(engine: Engine) -> None:
     if engine.dialect.name == "sqlite":
         Base.metadata.create_all(engine)
         return
-    if not inspect(engine).has_table("downloads"):
+    inspector = inspect(engine)
+    if not inspector.has_table("downloads"):
         raise RuntimeError(
             "The database has no 'downloads' table. Apply the schema first with "
             "`uv run python scripts/migrate.py` (uses DM_DATABASE_URL; "
             "add --dry-run to validate without changing anything)."
+        )
+    # Missing later migrations are a warning, not a stop: single downloads still
+    # work, and taking a live deployment down over it would be the worse failure.
+    missing = [name for name in ("playlists", "bans") if not inspector.has_table(name)]
+    if missing:
+        log.warning(
+            "The database is missing %s. Playlist downloads and the ban list will fail "
+            "until you run `uv run python scripts/migrate.py`.",
+            " and ".join(missing),
         )
 
 

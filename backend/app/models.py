@@ -23,6 +23,7 @@ from app.db import Base
 
 ACTIVE_STATUSES = ("queued", "fetching", "downloading", "processing")
 TERMINAL_STATUSES = ("done", "error", "cancelled")
+PLAYLIST_ACTIVE_STATUSES = ("queued", "running")
 
 
 def utcnow() -> datetime:
@@ -68,6 +69,10 @@ class Download(Base):
     error_code: Mapped[str | None] = mapped_column(String(32), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # Playlist membership (Phase 6). NULL for an ordinary single-video job.
+    playlist_job_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True, index=True)
+    playlist_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -75,6 +80,7 @@ class Download(Base):
     __table_args__ = (
         Index("downloads_user_created_idx", "user_id", "created_at"),
         Index("downloads_client_created_idx", "client_id", "created_at"),
+        Index("downloads_playlist_idx", "playlist_job_id", "playlist_index"),
     )
 
     # -- helpers ------------------------------------------------------------
@@ -100,12 +106,109 @@ class Download(Base):
             return False
         if self.expires_at is None:
             return True
-        return _aware(self.expires_at) > (now or utcnow())
+        return as_utc(self.expires_at) > (now or utcnow())
 
 
-def _aware(dt: datetime) -> datetime:
+def as_utc(dt: datetime) -> datetime:
     """SQLite drops tzinfo on the way back; treat naive values as UTC."""
     return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
+
+
+class Playlist(Base):
+    """One whole-playlist download: the parent of a set of `downloads` rows.
+
+    The children hold the per-item progress and files. This row holds what the
+    user asked for, the running counts, and the summary at the end.
+    """
+
+    __tablename__ = "playlists"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True, index=True)
+    client_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+
+    playlist_id: Mapped[str] = mapped_column(String(64))  # YouTube's list id, not the URL
+    title: Mapped[str | None] = mapped_column(Text, nullable=True)
+    channel: Mapped[str | None] = mapped_column(Text, nullable=True)
+    thumbnail: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    mode: Mapped[str] = mapped_column(String(8))  # audio | video
+    format: Mapped[str] = mapped_column(String(8))
+    quality: Mapped[str | None] = mapped_column(String(8), nullable=True)
+
+    # queued | running | done | partial | error | cancelled
+    status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
+    total_items: Mapped[int] = mapped_column(Integer, default=0)
+    completed_items: Mapped[int] = mapped_column(Integer, default=0)
+    failed_items: Mapped[int] = mapped_column(Integer, default=0)
+    cancelled_items: Mapped[int] = mapped_column(Integer, default=0)
+    cancel_requested: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    error_code: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        Index("playlists_user_created_idx", "user_id", "created_at"),
+        Index("playlists_client_created_idx", "client_id", "created_at"),
+    )
+
+    @property
+    def is_active(self) -> bool:
+        return self.status in PLAYLIST_ACTIVE_STATUSES
+
+    @property
+    def canonical_url(self) -> str:
+        return f"https://www.youtube.com/playlist?list={self.playlist_id}"
+
+    @property
+    def label(self) -> str:
+        if self.mode == "audio":
+            if self.format == "mp3":
+                return f"MP3 {self.quality} kbps"
+            return self.format.upper()
+        return f"MP4 {self.quality}p" if self.quality and self.quality != "best" else "MP4 best"
+
+    @property
+    def finished_items(self) -> int:
+        return self.completed_items + self.failed_items + self.cancelled_items
+
+    @property
+    def percent(self) -> float:
+        if not self.total_items:
+            return 0.0
+        return round(100.0 * self.finished_items / self.total_items, 1)
+
+
+class Ban(Base):
+    """A user id or a hashed IP that may not start downloads.
+
+    Rows are read on every job creation, so an admin can block abuse with one
+    INSERT (see backend/scripts/ban.py) and no redeploy.
+    """
+
+    __tablename__ = "bans"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    subject_type: Mapped[str] = mapped_column(String(16))  # user | ip_hash
+    subject: Mapped[str] = mapped_column(Text)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        Index("bans_subject_idx", "subject_type", "subject", unique=True),
+        Index("bans_expires_idx", "expires_at"),
+    )
+
+    def active(self, now: datetime | None = None) -> bool:
+        if self.expires_at is None:
+            return True
+        return as_utc(self.expires_at) > (now or utcnow())
 
 
 class Profile(Base):

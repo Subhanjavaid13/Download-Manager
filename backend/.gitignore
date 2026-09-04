@@ -38,4 +38,8 @@ tmp/
 *.ytdl
 *.log
 logs/
+
+# yt-dlp cookies (a signed-in YouTube session: treat it as a password)
 cookies.txt
+cookies*.txt
+*.cookies

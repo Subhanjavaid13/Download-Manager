@@ -9,6 +9,20 @@ Notes on quality:
   so they are the highest-fidelity choices.
 - Video above 1080p is usually VP9/AV1 in WebM. We still ask for MP4 first and
   fall back to whatever exists, then merge into an MP4 container.
+
+Notes on cookies:
+- `cookies_file` is optional and off by default. When YouTube starts answering
+  "Sign in to confirm you're not a bot", an operator exports the cookies of a
+  throwaway YouTube account in Netscape format and points DM_COOKIES_FILE at it.
+  yt-dlp then makes requests as that account. The file is a credential: it is
+  git-ignored, must never be committed, and should be readable only by the
+  service user. See backend/.env.example for the export steps.
+
+Notes on playlists:
+- `noplaylist` stays True on purpose. A playlist is expanded into its video ids
+  first (Downloader.fetch_playlist) and each item is then downloaded as its own
+  single-video job, which is what gives per-item progress, per-item files, and a
+  failure that stops one item instead of the whole run.
 """
 
 from dataclasses import dataclass
@@ -71,6 +85,8 @@ def build_ydl_options(
     req: DownloadRequest,
     out_dir: Path,
     ffmpeg_location: str | None = None,
+    cookies_file: Path | None = None,
+    max_bytes: int | None = None,
 ) -> dict:
     req.validate()
     opts: dict = {
@@ -87,6 +103,12 @@ def build_ydl_options(
     }
     if ffmpeg_location:
         opts["ffmpeg_location"] = ffmpeg_location
+    if cookies_file:
+        opts["cookiefile"] = str(cookies_file)
+    if max_bytes:
+        # yt-dlp refuses a stream whose *declared* size is over the cap. Streams
+        # that declare nothing are caught by the running total in downloader.py.
+        opts["max_filesize"] = max_bytes
 
     if req.mode == "audio":
         opts["format"] = audio_format_selector(req.audio_format)

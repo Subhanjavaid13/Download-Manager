@@ -36,6 +36,19 @@ class InvalidYouTubeUrl(ValueError):
     """Raised when the input is not a usable YouTube video or playlist link."""
 
 
+def is_video_id(value: str | None) -> bool:
+    """True for the 11-character ids YouTube gives videos."""
+    return bool(value and _VIDEO_ID.match(value))
+
+
+def video_url(video_id: str) -> str:
+    return f"https://www.youtube.com/watch?v={video_id}"
+
+
+def playlist_url(playlist_id: str) -> str:
+    return f"https://www.youtube.com/playlist?list={playlist_id}"
+
+
 @dataclass(frozen=True)
 class ParsedUrl:
     kind: Literal["video", "playlist"]

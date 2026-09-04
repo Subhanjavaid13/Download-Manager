@@ -13,6 +13,21 @@ class FriendlyError:
     http_status: int = 400
 
 
+class FileTooLargeError(Exception):
+    """The download passed DM_MAX_FILE_MB and was stopped part-way.
+
+    Defined here rather than in downloader.py so the mapping below can recognise
+    it by type instead of by matching on message text.
+    """
+
+    def __init__(self, limit_mb: int) -> None:
+        self.limit_mb = limit_mb
+        super().__init__(
+            f"This file is bigger than the {limit_mb} MB limit. "
+            "Choose a lower quality, or pick a shorter video."
+        )
+
+
 _RULES: list[tuple[tuple[str, ...], FriendlyError]] = [
     (
         ("private video",),
@@ -41,6 +56,14 @@ _RULES: list[tuple[tuple[str, ...], FriendlyError]] = [
         ),
     ),
     (
+        ("file is larger than max-filesize", "max-filesize", "file is too large"),
+        FriendlyError(
+            "file_too_large",
+            "That file is bigger than this server allows. Choose a lower quality.",
+            413,
+        ),
+    ),
+    (
         ("ffmpeg not found", "ffprobe and ffmpeg not found", "ffmpeg is not installed"),
         FriendlyError("ffmpeg_missing", "The server is missing FFmpeg. Contact the admin.", 500),
     ),
@@ -62,6 +85,8 @@ _DEFAULT = FriendlyError("download_failed", "The download failed. Please try aga
 
 
 def to_friendly(exc: BaseException) -> FriendlyError:
+    if isinstance(exc, FileTooLargeError):
+        return FriendlyError("file_too_large", str(exc), 413)
     text = str(exc).lower()
     for needles, friendly in _RULES:
         if any(n in text for n in needles):
